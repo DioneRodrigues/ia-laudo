@@ -11,6 +11,47 @@
       <div class="ev-recovery" hidden><label>Transcrição para cópia manual<textarea readonly rows="5"></textarea></label></div>
       <div class="ev-actions"></div></div>`;
     const get = (selector) => root.querySelector(selector);
+    const header = get('header');
+    header.title = 'Arraste para mover o painel';
+    let drag = null;
+    let moved = false;
+    const position = (x, y) => {
+      const bounds = root.getBoundingClientRect();
+      const left = `${Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8))}px`;
+      const top = `${Math.max(8, Math.min(y, window.innerHeight - bounds.height - 8))}px`;
+      if (root.style.left !== left) root.style.left = left;
+      if (root.style.top !== top) root.style.top = top;
+      if (root.style.right !== 'auto') root.style.right = 'auto';
+      if (root.style.bottom !== 'auto') root.style.bottom = 'auto';
+    };
+    const keepInViewport = () => {
+      if (!moved || !root.isConnected) return;
+      const bounds = root.getBoundingClientRect();
+      position(bounds.left, bounds.top);
+    };
+    header.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || !event.isPrimary || event.target.closest('button')) return;
+      const bounds = root.getBoundingClientRect();
+      drag = { id: event.pointerId, offsetX: event.clientX - bounds.left, offsetY: event.clientY - bounds.top };
+      header.setPointerCapture(event.pointerId);
+      root.classList.add('ev-dragging');
+      event.preventDefault();
+    });
+    header.addEventListener('pointermove', (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      moved = true;
+      position(event.clientX - drag.offsetX, event.clientY - drag.offsetY);
+    });
+    const endDrag = (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      root.classList.remove('ev-dragging');
+      if (header.hasPointerCapture(event.pointerId)) header.releasePointerCapture(event.pointerId);
+    };
+    for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) header.addEventListener(type, endDrag);
+    window.addEventListener('resize', keepInViewport);
+    // Mudanças de estado e minimizar/expandir podem alterar o tamanho do painel.
+    new ResizeObserver(keepInViewport).observe(root);
     get('.ev-minimize').onclick = () => {
       const minimized = root.classList.toggle('ev-minimized');
       get('.ev-minimize').textContent = minimized ? '+' : '−';

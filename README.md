@@ -141,7 +141,7 @@ docker run --rm --init -p 127.0.0.1:3001:3001 --env-file backend/.env -e HOST=0.
 3. Clique em **Load unpacked / Carregar sem compactação**.
 4. Selecione a pasta **extension/**, não a raiz do projeto.
 5. Abra ou recarregue `https://pacs.evacenter.com/` e entre no painel **eden ai**.
-6. O painel flutuante aparece quando um editor compatível está visível. O botão `−` minimiza o painel; `+` expande.
+6. O painel flutuante aparece quando um editor compatível está visível. Arraste pelo cabeçalho para movê-lo pela página; ele permanece dentro da janela. O botão `−` minimiza o painel; `+` expande. A posição permanece enquanto a página estiver aberta e volta ao canto inferior direito ao recarregar.
 
 Após editar os arquivos da extensão, clique em recarregar na página de extensões e recarregue também a aba do PACS.
 

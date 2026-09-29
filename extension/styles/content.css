@@ -3,11 +3,13 @@
   width: 260px; max-width: calc(100vw - 24px); color: #e6ecf5; background: #17202e;
   border: 1px solid #40506a; border-radius: 12px; box-shadow: 0 8px 32px #0008;
   font: 13px/1.5 system-ui, sans-serif; color-scheme: dark;
+  display: flex; flex-direction: column; max-height: calc(100vh - 32px);
 }
 #eden-voice-transcriber-root * { box-sizing: border-box; }
 #eden-voice-transcriber-root [hidden] { display: none !important; }
-#eden-voice-transcriber-root header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-#eden-voice-transcriber-root .ev-body { padding: 0 14px 14px; }
+#eden-voice-transcriber-root header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; flex-shrink: 0; cursor: grab; touch-action: none; user-select: none; }
+#eden-voice-transcriber-root.ev-dragging header { cursor: grabbing; }
+#eden-voice-transcriber-root .ev-body { padding: 0 14px 14px; overflow-y: auto; min-height: 0; }
 #eden-voice-transcriber-root p { margin: 8px 0; }
 #eden-voice-transcriber-root .ev-timer { display: block; text-align: center; font-size: 28px; font-variant-numeric: tabular-nums; margin: 8px; }
 #eden-voice-transcriber-root button { font: inherit; color: #eef5ff; background: #29446b; border: 1px solid #55719a; border-radius: 7px; padding: 9px 12px; cursor: pointer; }
