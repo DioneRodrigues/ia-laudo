@@ -1,0 +1,22 @@
+#eden-voice-transcriber-root {
+  all: initial; position: fixed; right: 20px; bottom: 24px; z-index: 2147483647;
+  width: 260px; max-width: calc(100vw - 24px); color: #e6ecf5; background: #17202e;
+  border: 1px solid #40506a; border-radius: 12px; box-shadow: 0 8px 32px #0008;
+  font: 13px/1.5 system-ui, sans-serif; color-scheme: dark;
+}
+#eden-voice-transcriber-root * { box-sizing: border-box; }
+#eden-voice-transcriber-root [hidden] { display: none !important; }
+#eden-voice-transcriber-root header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+#eden-voice-transcriber-root .ev-body { padding: 0 14px 14px; }
+#eden-voice-transcriber-root p { margin: 8px 0; }
+#eden-voice-transcriber-root .ev-timer { display: block; text-align: center; font-size: 28px; font-variant-numeric: tabular-nums; margin: 8px; }
+#eden-voice-transcriber-root button { font: inherit; color: #eef5ff; background: #29446b; border: 1px solid #55719a; border-radius: 7px; padding: 9px 12px; cursor: pointer; }
+#eden-voice-transcriber-root button:hover { background: #385783; }
+#eden-voice-transcriber-root button:focus-visible { outline: 2px solid #9ac5ff; outline-offset: 2px; }
+#eden-voice-transcriber-root .ev-minimize { padding: 1px 9px; font-size: 20px; }
+#eden-voice-transcriber-root .ev-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+#eden-voice-transcriber-root audio { width: 100%; height: 38px; }
+#eden-voice-transcriber-root .ev-error { color: #ffb5b5; overflow-wrap: anywhere; }
+#eden-voice-transcriber-root textarea { width: 100%; resize: vertical; font: inherit; margin-top: 6px; background: #0f1722; color: #e6ecf5; }
+#eden-voice-transcriber-root.ev-minimized { width: 200px; }
+#eden-voice-transcriber-root.ev-minimized .ev-body { display: none; }

@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Eden Voice Transcriber",
+  "version": "0.2.0",
+  "description": "Grava um ditado, transcreve e insere o texto no Eden AI.",
+  "content_scripts": [{
+    "matches": ["https://pacs.evacenter.com/*"],
+    "js": ["content/config.js", "content/recorder.js", "content/edenEditor.js", "content/edenControls.js", "content/ui.js", "content/content.js"],
+    "css": ["styles/content.css"],
+    "run_at": "document_idle"
+  }]
+}
