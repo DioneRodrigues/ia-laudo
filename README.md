@@ -103,6 +103,37 @@ curl http://localhost:3001/health
 
 Resposta: `{"success":true}`. Esse endpoint confirma apenas que o servidor está respondendo, não valida credenciais nem acesso à OpenAI. O servidor recusa iniciar se a chave estiver vazia.
 
+## Docker e EasyPanel
+
+O `backend/Dockerfile` usa Node.js 22, instala somente dependências de produção, executa como usuário `node` e inclui healthcheck em `/health`. O `.dockerignore` exclui `.env`, áudio, testes e dependências locais do contexto enviado ao Docker. As variáveis são fornecidas em runtime; não é necessário criar `.env` dentro da imagem.
+
+No EasyPanel, crie um serviço **App** com origem no repositório ou upload:
+
+1. Configure **Build Path** como `/backend`.
+2. Selecione o builder **Dockerfile**, com caminho `Dockerfile` (relativo ao Build Path).
+3. Configure as variáveis de ambiente do serviço:
+
+   ```dotenv
+   OPENAI_API_KEY=sua-chave-real
+   OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+   OPENAI_TIMEOUT_MS=120000
+   CORS_ORIGIN=https://pacs.evacenter.com
+   HOST=0.0.0.0
+   PORT=3001
+   ```
+
+4. Configure o domínio HTTPS com porta interna **3001** e faça o deploy. Mantenha o comando padrão da imagem; não substitua por `npm start`, que carrega um `.env` local.
+5. Verifique `https://seu-dominio/health` e altere `API_BASE_URL` em `extension/content/config.js` para esse domínio HTTPS. Recarregue a extensão e a aba do PACS.
+
+Não é necessário volume persistente: `/app/uploads` recebe apenas arquivos temporários. O Build Path define também o contexto Docker, conforme a [documentação do EasyPanel](https://easypanel.io/docs/builders).
+
+Para construir e executar localmente, a partir da raiz do repositório:
+
+```bash
+docker build -t eden-voice-backend ./backend
+docker run --rm --init -p 127.0.0.1:3001:3001 --env-file backend/.env -e HOST=0.0.0.0 -e PORT=3001 eden-voice-backend
+```
+
 ## Carregar a extensão
 
 1. Abra `chrome://extensions`.

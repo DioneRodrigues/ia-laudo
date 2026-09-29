@@ -1,7 +1,7 @@
 import { buildApp } from './app.js';
 
 if (!process.env.OPENAI_API_KEY?.trim()) {
-  console.error('Configure OPENAI_API_KEY no arquivo backend/.env antes de iniciar.');
+  console.error('Configure OPENAI_API_KEY no ambiente ou no arquivo backend/.env antes de iniciar.');
   process.exit(1);
 }
 const port = Number(process.env.PORT || 3001);

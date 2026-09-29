@@ -1,0 +1,8 @@
+# Inclui apenas os arquivos necessários à imagem.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!src/
+!src/**
