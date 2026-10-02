@@ -1,24 +1,86 @@
+/* Identidade: lilás e laranja da Clínica da Mama. Recursos locais, sem fontes remotas. */
 #eden-voice-transcriber-root {
-  all: initial; position: fixed; right: 20px; bottom: 24px; z-index: 2147483647;
-  width: 260px; max-width: calc(100vw - 24px); color: #e6ecf5; background: #17202e;
-  border: 1px solid #40506a; border-radius: 12px; box-shadow: 0 8px 32px #0008;
-  font: 13px/1.5 system-ui, sans-serif; color-scheme: dark;
-  display: flex; flex-direction: column; max-height: calc(100vh - 32px);
+  all: initial;
+  --ev-purple: #5b4f82;
+  --ev-lilac: #a59ac8;
+  --ev-orange: #ee7600;
+  --ev-ink: #302a40;
+  --ev-muted: #6b6577;
+  --ev-surface: #f6f4fa;
+  position: fixed; z-index: 2147483646; display: flex;
+  color: var(--ev-ink); font: 14px/1.5 "Segoe UI", "Trebuchet MS", sans-serif;
+  color-scheme: light; text-align: left;
 }
-#eden-voice-transcriber-root * { box-sizing: border-box; }
-#eden-voice-transcriber-root [hidden] { display: none !important; }
-#eden-voice-transcriber-root header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; flex-shrink: 0; cursor: grab; touch-action: none; user-select: none; }
-#eden-voice-transcriber-root.ev-dragging header { cursor: grabbing; }
-#eden-voice-transcriber-root .ev-body { padding: 0 14px 14px; overflow-y: auto; min-height: 0; }
-#eden-voice-transcriber-root p { margin: 8px 0; }
-#eden-voice-transcriber-root .ev-timer { display: block; text-align: center; font-size: 28px; font-variant-numeric: tabular-nums; margin: 8px; }
-#eden-voice-transcriber-root button { font: inherit; color: #eef5ff; background: #29446b; border: 1px solid #55719a; border-radius: 7px; padding: 9px 12px; cursor: pointer; }
-#eden-voice-transcriber-root button:hover { background: #385783; }
-#eden-voice-transcriber-root button:focus-visible { outline: 2px solid #9ac5ff; outline-offset: 2px; }
-#eden-voice-transcriber-root .ev-minimize { padding: 1px 9px; font-size: 20px; }
-#eden-voice-transcriber-root .ev-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 12px; }
+#eden-voice-transcriber-root *, #eden-voice-transcriber-root *::before, #eden-voice-transcriber-root *::after { box-sizing: border-box; }
+#eden-voice-transcriber-root[hidden], #eden-voice-transcriber-root [hidden] { display: none !important; }
+#eden-voice-transcriber-root :is(h2, h3, p, ul) { margin: 0; padding: 0; }
+#eden-voice-transcriber-root svg { width: 20px; height: 20px; flex-shrink: 0; }
+#eden-voice-transcriber-root button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; font: inherit; cursor: pointer; border: 0; }
+#eden-voice-transcriber-root button:focus-visible, #eden-voice-transcriber-root textarea:focus-visible { outline: 3px solid var(--ev-orange); outline-offset: 3px; }
+#eden-voice-transcriber-root .ev-panel { display: flex; flex-direction: column; width: 100%; min-height: 0; background: white; border: 1px solid #ddd6ec; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 18px #4032570d; }
+#eden-voice-transcriber-root .ev-header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #ece8f3; flex-shrink: 0; }
+#eden-voice-transcriber-root .ev-logo { display: block; width: 112px; height: auto; flex-shrink: 0; object-fit: contain; }
+#eden-voice-transcriber-root .ev-brand { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+#eden-voice-transcriber-root .ev-brand strong { font-size: 16px; font-weight: 650; line-height: 1.3; color: var(--ev-purple); }
+#eden-voice-transcriber-root .ev-brand span { font-size: 11px; color: var(--ev-muted); }
+#eden-voice-transcriber-root .ev-close { width: 36px; height: 36px; flex-shrink: 0; align-self: flex-start; border-radius: 50%; background: var(--ev-surface); color: var(--ev-muted); }
+#eden-voice-transcriber-root .ev-close:hover { background: #eae5f3; color: var(--ev-purple); }
+#eden-voice-transcriber-root .ev-body { padding: 24px; display: flex; flex: 1; flex-direction: column; gap: 18px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+#eden-voice-transcriber-root .ev-body > * { flex-shrink: 0; }
+#eden-voice-transcriber-root .ev-bottom { padding: 0 24px 18px; display: flex; flex-direction: column; gap: 12px; flex-shrink: 0; }
+#eden-voice-transcriber-root .ev-session { display: flex; align-items: center; gap: 14px; }
+#eden-voice-transcriber-root .ev-state-icon { width: 48px; height: 48px; border-radius: 16px; background: #eeeaf6; color: var(--ev-purple); display: grid; place-items: center; flex-shrink: 0; }
+#eden-voice-transcriber-root .ev-state-icon svg { width: 24px; height: 24px; }
+#eden-voice-transcriber-root .ev-session-copy { flex: 1; min-width: 0; }
+#eden-voice-transcriber-root .ev-status-row { display: flex; align-items: center; gap: 8px; }
+#eden-voice-transcriber-root .ev-status { font-size: 17px; font-weight: 650; line-height: 1.3; }
+#eden-voice-transcriber-root .ev-hint { color: var(--ev-muted); font-size: 12px; margin-top: 5px; }
+#eden-voice-transcriber-root .ev-timer { font-size: 23px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; color: var(--ev-purple); white-space: nowrap; }
+#eden-voice-transcriber-root .ev-record-dot { display: none; width: 8px; height: 8px; flex-shrink: 0; border-radius: 50%; background: #c43b4c; }
+#eden-voice-transcriber-root[data-state="recording"] .ev-record-dot { display: block; animation: ev-record-pulse 1.5s ease-in-out infinite; }
+#eden-voice-transcriber-root[data-state="recording"] .ev-state-icon { background: #fcecef; color: #ad2940; }
+#eden-voice-transcriber-root .ev-wave { height: 48px; display: flex; align-items: center; justify-content: center; gap: 5px; background: var(--ev-surface); border-radius: 10px; }
+#eden-voice-transcriber-root .ev-wave i { width: 3px; height: var(--bar); background: var(--ev-lilac); border-radius: 3px; animation: ev-wave 1.1s ease-in-out var(--delay) infinite alternate; }
 #eden-voice-transcriber-root audio { width: 100%; height: 38px; }
-#eden-voice-transcriber-root .ev-error { color: #ffb5b5; overflow-wrap: anywhere; }
-#eden-voice-transcriber-root textarea { width: 100%; resize: vertical; font: inherit; margin-top: 6px; background: #0f1722; color: #e6ecf5; }
-#eden-voice-transcriber-root.ev-minimized { width: 200px; }
-#eden-voice-transcriber-root.ev-minimized .ev-body { display: none; }
+#eden-voice-transcriber-root .ev-actions { display: flex; gap: 10px; margin-top: auto; flex-shrink: 0; }
+#eden-voice-transcriber-root .ev-actions button { min-height: 44px; padding: 11px 18px; border-radius: 10px; font-weight: 600; }
+#eden-voice-transcriber-root .ev-primary { flex: 1; background: var(--ev-purple); color: white; box-shadow: 0 3px 8px #5b4f8220; }
+#eden-voice-transcriber-root .ev-primary:hover { background: #493c70; }
+#eden-voice-transcriber-root[data-state="recording"] .ev-primary { background: #ac3047; }
+#eden-voice-transcriber-root .ev-secondary { background: var(--ev-surface); color: var(--ev-purple); }
+#eden-voice-transcriber-root .ev-secondary:hover { background: #eae5f3; }
+#eden-voice-transcriber-root .ev-replace-note { color: var(--ev-muted); font-size: 11px; text-align: center; }
+#eden-voice-transcriber-root .ev-footer { flex-shrink: 0; padding: 10px 20px; display: flex; align-items: center; gap: 7px; background: var(--ev-surface); color: var(--ev-muted); font-size: 11px; border-top: 1px solid #ece8f3; }
+#eden-voice-transcriber-root .ev-footer-dot { height: 5px; width: 5px; border-radius: 50%; background: var(--ev-orange); }
+#eden-voice-transcriber-root .ev-command-heading { display: flex; align-items: center; gap: 8px; color: var(--ev-purple); }
+#eden-voice-transcriber-root .ev-command-heading h3 { flex: 1; font-size: 13px; font-weight: 650; }
+#eden-voice-transcriber-root .ev-command-count { background: #eeeaf6; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
+#eden-voice-transcriber-root .ev-medical-commands { color: var(--ev-muted); font-size: 11px; margin: 5px 0 12px; }
+#eden-voice-transcriber-root .ev-command-list { list-style: none; display: flex; flex-direction: column; gap: 14px; }
+#eden-voice-transcriber-root .ev-command-list li { padding-left: 12px; border-left: 3px solid var(--ev-lilac); overflow-wrap: anywhere; }
+#eden-voice-transcriber-root .ev-command-list strong { font-size: 13px; font-weight: 650; color: var(--ev-purple); }
+#eden-voice-transcriber-root .ev-alias { display: block; font-size: 11px; color: var(--ev-muted); margin: 2px 0 5px; }
+#eden-voice-transcriber-root .ev-command-list p { font-size: 12px; line-height: 1.6; }
+#eden-voice-transcriber-root .ev-no-commands { color: var(--ev-muted); font-size: 12px; }
+#eden-voice-transcriber-root .ev-error { color: #932a3a; background: #fff1f3; padding: 12px; border-radius: 8px; font-size: 12px; overflow-wrap: anywhere; }
+#eden-voice-transcriber-root .ev-recovery label { font-size: 12px; font-weight: 600; }
+#eden-voice-transcriber-root textarea { display: block; box-sizing: border-box; width: 100%; min-height: 90px; resize: vertical; font: 12px/1.6 "Segoe UI", sans-serif; margin-top: 6px; padding: 10px; border: 1px solid #d6cee4; border-radius: 8px; background: white; color: var(--ev-ink); }
+#eden-voice-transcriber-root.ev-closed { justify-content: flex-end; pointer-events: none; }
+#eden-voice-transcriber-root .ev-reopen { pointer-events: auto; padding: 6px 12px; border-radius: 8px; background: white; color: var(--ev-purple); border: 1px solid #d6cee4; font-size: 12px; box-shadow: 0 2px 8px #302a4010; }
+#eden-voice-transcriber-root.ev-narrow .ev-header { padding: 10px 12px; gap: 9px; }
+#eden-voice-transcriber-root.ev-narrow .ev-logo { width: 88px; }
+#eden-voice-transcriber-root.ev-narrow .ev-brand strong { font-size: 13px; }
+#eden-voice-transcriber-root.ev-narrow .ev-brand span { font-size: 10px; }
+#eden-voice-transcriber-root.ev-narrow .ev-body { padding: 16px; gap: 14px; }
+#eden-voice-transcriber-root.ev-narrow .ev-bottom { padding: 0 16px 16px; }
+#eden-voice-transcriber-root.ev-narrow .ev-session { flex-wrap: wrap; gap: 10px; }
+#eden-voice-transcriber-root.ev-narrow .ev-status { font-size: 15px; }
+#eden-voice-transcriber-root.ev-narrow .ev-timer { margin-left: auto; font-size: 20px; }
+#eden-voice-transcriber-root.ev-narrow .ev-actions { flex-wrap: wrap; }
+#eden-voice-transcriber-root.ev-narrow .ev-actions button { flex: 1 1 auto; }
+[data-eden-voice-covered="true"] { opacity: 0 !important; pointer-events: none !important; }
+@keyframes ev-record-pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 #c43b4c20; } 50% { opacity: .45; box-shadow: 0 0 0 5px #c43b4c10; } }
+@keyframes ev-wave { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  #eden-voice-transcriber-root .ev-record-dot, #eden-voice-transcriber-root .ev-wave i { animation: none !important; }
+}

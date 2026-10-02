@@ -6,7 +6,9 @@
   let ui, recorder, context, blob, audioURL, timer, controller, stopPauseWatch;
   let state = 'idle', error = '', text = '', epoch = 0;
   let medicalCommandCount = 0;
-  const draw = () => ui?.render({ state, error, audioURL, text, medicalCommandCount });
+  let medicalCommands = [];
+  let closeRequested = false;
+  const draw = () => ui?.render({ state, error, audioURL, text, medicalCommandCount, medicalCommands });
   const fail = (message, next = 'error') => {
     error = message; state = next;
     console.error(`[Eden Voice] ERROR: ${message}`);
@@ -23,10 +25,12 @@
     epoch++; controller?.abort(); controller = null;
     releaseAudio(); context = null; text = ''; error = ''; state = 'idle';
     medicalCommandCount = 0;
+    medicalCommands = [];
     ui?.time(0); draw();
   };
   const start = async () => {
     if (state !== 'idle') return;
+    closeRequested = false;
     const operation = ++epoch;
     try {
       context = EV.captureContext();
@@ -68,7 +72,7 @@
       const result = await recorder.stop();
       if (operation !== epoch) return;
       blob = result; audioURL = URL.createObjectURL(blob); state = 'ready'; draw();
-      if (autoTranscribe) await transcribe();
+      if (autoTranscribe && !closeRequested) await transcribe();
     } catch (failure) { if (operation === epoch) { releaseAudio(); fail(failure.message); } }
   };
   const transcribe = async () => {
@@ -100,9 +104,11 @@
       text = data.text;
       medicalCommandCount = Number.isSafeInteger(data.medicalCommandCount) && data.medicalCommandCount >= 0
         ? data.medicalCommandCount : 0;
+      medicalCommands = Array.isArray(data.medicalCommands) ? data.medicalCommands.filter((command) => command
+        && ['id', 'label', 'alias', 'replacement'].every((key) => typeof command[key] === 'string')) : [];
       releaseAudio();
       if (!EV.contextIsCurrent(context)) throw new Error('A página mudou durante a transcrição. Confira o exame e copie o texto manualmente.');
-      await EV.insertTextIntoEden(text, context);
+      await EV.insertTextIntoEden(text, context, () => operation === epoch);
       if (operation !== epoch) return;
       if (EV.CONFIG.AUTO_SUBMIT) {
         state = 'submitting'; draw();
@@ -126,19 +132,33 @@
     epoch++; controller?.abort(); controller = null; releaseAudio(); context = null;
     fail('A página ou o editor mudou. Confira o exame e inicie um novo ditado.', text ? 'recovery' : 'error');
   };
+  const closePanel = async () => {
+    closeRequested = true;
+    if (state === 'recording') await stop();
+    else if (state === 'requesting') {
+      reset();
+    } else if (['transcribing', 'submitting'].includes(state)) {
+      // Cancelar antes de liberar o editor impede sobrescrever uma edição manual posterior.
+      epoch++; controller?.abort(); controller = null;
+      state = text ? 'recovery' : blob ? 'ready' : 'idle';
+      draw();
+    }
+    ui?.close();
+  };
   const reconcile = () => {
     if (context && !['idle', 'error', 'recovery', 'success', 'sent'].includes(state) && !EV.contextIsCurrent(context)) invalidate();
-    if (ui && !ui.root.isConnected) {
-      if (!document.getElementById(ui.root.id)) document.body?.append(ui.root);
-      return;
+    let editor;
+    try { editor = EV.findEdenEditor(); } catch { ui?.attach(null); return; }
+    if (!ui) {
+      if (!document.body || document.getElementById('eden-voice-transcriber-root')) return;
+      ui = EV.createUI({ start, stop: () => stop(), transcribe, reset, close: closePanel }); draw();
     }
-    if (ui || !document.body || document.getElementById('eden-voice-transcriber-root')) return;
-    try { EV.findEdenEditor(); } catch { return; }
-    ui = EV.createUI({ start, stop: () => stop(), transcribe, reset }); draw();
+    ui.attach(editor);
   };
   EV.bindEdenControls({
     busy: () => ['requesting', 'recording', 'stopping', 'transcribing', 'submitting'].includes(state),
     toggle: () => {
+      ui?.open();
       if (state === 'recording') { void stop(true); return; }
       if (state === 'ready') { void transcribe(); return; }
       if (['success', 'sent', 'error'].includes(state)) reset();
@@ -158,7 +178,7 @@
   let routeTimer = setInterval(reconcile, 500);
   window.addEventListener('popstate', reconcile);
   window.addEventListener('hashchange', reconcile);
-  window.addEventListener('pagehide', () => { reset(); observer.disconnect(); clearInterval(routeTimer); });
+  window.addEventListener('pagehide', () => { reset(); ui?.suspend(); observer.disconnect(); clearInterval(routeTimer); });
   window.addEventListener('pageshow', (event) => {
     if (event.persisted) {
       observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });

@@ -1,22 +1,22 @@
 # Eden Voice Transcriber
 
-MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e acrescenta a transcrição ao editor Eden AI. Inclui expansão determinística no backend de comandos médicos. Sem banco, histórico, cadastro dinâmico de regras, login ou streaming.
+MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e substitui o conteúdo do editor Eden AI pela transcrição. Inclui expansão determinística no backend de comandos médicos. Sem banco, histórico, cadastro dinâmico de regras, login ou streaming.
 
 ## Arquitetura
 
 ```text
 Microfone → MediaRecorder no content script → Blob em memória
        → POST /transcribe (multipart, campo audio)
-       → arquivo temporário → serviço OpenAI → remoção em finally
+       → arquivo temporário → OpenAI com contexto médico e português → remoção em finally
        → commandProcessor no backend
-       → { success: true, text, medicalCommandCount } → editor TipTap/ProseMirror
+       → { success: true, text, medicalCommandCount, medicalCommands } → editor TipTap/ProseMirror
 ```
 
 A extensão usa JavaScript puro e não precisa de build. Os scripts compartilham um namespace no mundo isolado do content script. O `MutationObserver` espera pelo editor, mantém um único painel e detecta remoção/substituição do editor. Uma sondagem de 500 ms também detecta mudanças de URL sem mutação DOM.
 
 O `fetch` parte do content script; sua origem é a página PACS. O backend permite explicitamente essa origem. A extensão não precisa de service worker, `tabs`, `storage`, `scripting`, acesso a todos os sites ou chave de API. A única regra de injeção é o domínio do PACS no manifest. A permissão de microfone é solicitada pela página após o clique.
 
-`services/transcriptionService.js` usa o SDK oficial (`client.audio.transcriptions.create`) e o modelo configurável `gpt-transcribe`, conforme a [documentação oficial de transcrição de arquivos](https://developers.openai.com/api/docs/guides/speech-to-text), consultada em 29/09/2026. Para trocar o provedor, mantenha `transcribeAudio(filePath, { signal })` retornando uma string. No backend, os comandos médicos conhecidos são expandidos após a transcrição e antes da inserção.
+`services/transcriptionService.js` usa o SDK oficial (`client.audio.transcriptions.create`) e o modelo configurável `gpt-transcribe`, recomendado pela [documentação oficial de transcrição de arquivos](https://developers.openai.com/api/docs/guides/speech-to-text), consultada em 02/10/2026. Para trocar o provedor, mantenha `transcribeAudio(filePath, { signal })` retornando uma string. No backend, os comandos médicos conhecidos são expandidos após a transcrição e antes da inserção.
 
 ## Estrutura
 
@@ -33,6 +33,7 @@ extenssao-eden-ia/
 │   │   ├── edenEditor.js
 │   │   ├── edenControls.js
 │   │   └── ui.js
+│   ├── assets/clinicadamama-logo.png
 │   ├── styles/content.css
 │   └── icons/.gitkeep
 └── backend/
@@ -43,6 +44,8 @@ extenssao-eden-ia/
     ├── src/
     │   ├── app.js
     │   ├── server.js
+    │   ├── config/transcriptionVocabulary.js
+    │   ├── config/transcriptionContext.js
     │   ├── routes/transcribe.js
     │   ├── services/commandProcessor.js
     │   └── services/transcriptionService.js
@@ -50,6 +53,7 @@ extenssao-eden-ia/
     └── test/
         ├── backend.test.js
         ├── commandProcessor.test.js
+        ├── transcriptionService.test.js
         ├── browser.test.js
         └── fixtures/editor.js
 ```
@@ -78,6 +82,7 @@ PORT=3001
 HOST=127.0.0.1
 OPENAI_API_KEY=sua-chave-real
 OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+TRANSCRIPTION_MEDICAL_CONTEXT_ENABLED=true
 OPENAI_TIMEOUT_MS=120000
 CORS_ORIGIN=https://pacs.evacenter.com
 ```
@@ -119,6 +124,7 @@ No EasyPanel, crie um serviço **App** com origem no repositório ou upload:
    ```dotenv
    OPENAI_API_KEY=sua-chave-real
    OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+   TRANSCRIPTION_MEDICAL_CONTEXT_ENABLED=true
    OPENAI_TIMEOUT_MS=120000
    CORS_ORIGIN=https://pacs.evacenter.com
    HOST=0.0.0.0
@@ -144,7 +150,7 @@ docker run --rm --init -p 127.0.0.1:3001:3001 --env-file backend/.env -e HOST=0.
 3. Clique em **Load unpacked / Carregar sem compactação**.
 4. Selecione a pasta **extension/**, não a raiz do projeto.
 5. Abra ou recarregue `https://pacs.evacenter.com/` e entre no painel **eden ai**.
-6. O painel flutuante aparece quando um editor compatível está visível. Arraste pelo cabeçalho para movê-lo pela página; ele permanece dentro da janela. O botão `−` minimiza o painel; `+` expande. A posição permanece enquanto a página estiver aberta e volta ao canto inferior direito ao recarregar.
+6. O painel da Clínica da Mama ocupa a área do editor Eden, acompanhando redimensionamento e rolagem. O botão **X** libera o campo para digitar manualmente; **Abrir ditado da Mama** restaura o painel. A extensão não insere sua interface dentro do documento TipTap.
 
 Após editar os arquivos da extensão, clique em recarregar na página de extensões e recarregue também a aba do PACS.
 
@@ -160,9 +166,9 @@ Durante a solicitação do microfone e a gravação, um `MutationObserver` vigia
 
 Os listeners são delegados e continuam funcionando quando o React recria os botões. Enquanto a extensão grava/processa, cliques manuais em Criar relatório são bloqueados para evitar envio prematuro ou duplicado. Troca de exame cancela também a espera pelo botão. Falha de inserção impede o clique; botão ausente/desabilitado após o timeout mantém o texto disponível e orienta o envio manual, sem retranscrever.
 
-O painel flutuante continua disponível: **Finalizar** nele mantém a etapa de reprodução e o botão **Transcrever**. O envio ao Eden após a transcrição é automático nos dois fluxos. Para voltar a apenas inserir texto, altere `AUTO_SUBMIT` para `false` em `extension/content/config.js`. Os seletores e `EDEN_CONTROL_TIMEOUT_MS` (4 segundos) estão no mesmo arquivo. Se usar `EDITOR_CONTAINER_SELECTOR`, escolha um contêiner que inclua o editor e os dois controles.
+O painel da Clínica da Mama continua disponível: **Finalizar** nele mantém a etapa de reprodução e o botão **Transcrever**. O envio ao Eden após a transcrição é automático nos dois fluxos. Para voltar a apenas inserir texto, altere `AUTO_SUBMIT` para `false` em `extension/content/config.js`. Os seletores e `EDEN_CONTROL_TIMEOUT_MS` (4 segundos) estão no mesmo arquivo. Se usar `EDITOR_CONTAINER_SELECTOR`, escolha um contêiner que inclua o editor e os dois controles.
 
-### Fluxo pelo painel flutuante
+### Fluxo pelo painel da Clínica da Mama
 
 Use um ditado de teste sem dados reais para a primeira validação:
 
@@ -171,7 +177,7 @@ Use um ditado de teste sem dados reais para a primeira validação:
 3. Clique em **Finalizar**. O indicador de captura deve desligar; todas as tracks são encerradas.
 4. Reproduza a gravação no controle de áudio. **Descartar** libera o Blob e permite começar novamente.
 5. Clique em **Transcrever** e aguarde. Não troque de exame durante o fluxo.
-6. O texto anterior é preservado e a transcrição acrescentada após duas quebras de linha; em seguida, Criar relatório é acionado automaticamente.
+6. O texto anterior do campo Eden é substituído pela nova transcrição; em seguida, Criar relatório é acionado automaticamente. O conteúdo é selecionado e substituído apenas após uma resposta válida do backend, nunca ao iniciar a gravação.
 7. Confira o resultado gerado pelo Eden. Para testar a persistência do editor antes do envio, desative temporariamente `AUTO_SUBMIT`, recarregue a extensão/aba e valide a digitação posterior.
 8. Clique em **Novo ditado** para recomeçar.
 
@@ -188,7 +194,7 @@ curl -X POST http://localhost:3001/transcribe \
 Respostas:
 
 ```json
-{ "success": true, "text": "Texto transcrito.", "medicalCommandCount": 0 }
+{ "success": true, "text": "Texto transcrito.", "medicalCommandCount": 0, "medicalCommands": [] }
 ```
 
 ```json
@@ -199,7 +205,7 @@ Formatos aceitos: WebM, Ogg, MP4, MP3 e WAV, com MIME compatível. O nome origin
 
 ## Comandos médicos (V1)
 
-Comandos médicos são aliases conhecidos substituídos por frases fixas no backend. O fluxo é **gravação → transcrição → processamento de comandos no backend → inserção no Eden**. A rota `backend/src/routes/transcribe.js` chama `processMedicalCommands` após validar o texto do provedor. `/transcribe` retorna `text` já processado e `medicalCommandCount`. A extensão insere esse texto sem reprocessá-lo e usa a contagem para mostrar “1 comando médico aplicado” ou a quantidade no plural. Respostas de um backend antigo, sem contagem, continuam aceitas pela extensão (contagem zero).
+Comandos médicos são aliases conhecidos substituídos por frases fixas no backend. O fluxo é **gravação → transcrição → processamento de comandos no backend → inserção no Eden**. A rota `backend/src/routes/transcribe.js` chama `processMedicalCommands` após validar o texto do provedor. `/transcribe` retorna `text` já processado, `medicalCommandCount` e `medicalCommands` (lista de ocorrências com `id`, `label`, `alias` e `replacement`). A extensão insere esse texto sem reprocessá-lo e usa a contagem para mostrar “1 comando médico aplicado” ou a quantidade no plural. Cada comando aparece com seu nome, o alias reconhecido e a frase expandida, inclusive após o envio ao Eden. A lista é renderizada como texto, sem interpretar HTML vindo do backend. Respostas de um backend antigo, sem contagem, continuam aceitas pela extensão (contagem zero).
 
 As regras ficam na lista `MEDICAL_COMMANDS` de `backend/src/services/commandProcessor.js`. A V1 inclui Chammas 1 a 5, com as frases cadastradas, números por extenso e romanos. A busca ignora maiúsculas/minúsculas; “três” e “tres” são aliases explícitos. O restante do texto, incluindo acentos, espaços e quebras de linha, é preservado. Limites Unicode evitam matches dentro de palavras e números maiores. As substituições acontecem em uma única passagem, sem reprocessar as frases inseridas. Um ponto imediatamente após o alias é aproveitado quando a frase já termina com ponto, evitando `..`; outras pontuações são preservadas.
 
@@ -217,18 +223,63 @@ Para adicionar um comando, acrescente um objeto à lista (exemplo de estrutura; 
 ```js
 {
   id: 'tirads-3',
+  label: 'TI-RADS 3',
   aliases: ['tirads 3', 'ti rads 3'],
   replacement: 'Frase cadastrada para este comando.',
 },
 ```
 
-Para aceitar outra grafia, acrescente uma string ao array `aliases` da regra correspondente. Use aliases únicos entre regras. O motor é genérico: não exige lógica específica para novas categorias. Após editar as regras, reinicie o backend ou faça um novo deploy no EasyPanel. Todas as extensões que usam esse backend recebem as novas expansões na próxima transcrição, sem atualização local.
+O campo opcional `label` define o nome apresentado ao médico (na ausência dele, usa-se `id`). Para aceitar outra grafia, acrescente uma string ao array `aliases` da regra correspondente. Use aliases únicos entre regras. O motor é genérico: não exige lógica específica para novas categorias. Após editar as regras, reinicie o backend ou faça um novo deploy no EasyPanel. Todas as extensões que usam esse backend recebem as novas expansões na próxima transcrição, sem atualização local.
 
 Sem match, a transcrição segue exatamente como recebida. Se o processador falhar, o backend registra uma mensagem e retorna o texto original com contagem zero e resposta de sucesso. Os logs `[Eden Voice]` do backend mostram somente eventos, ID, alias e quantidade de substituições, sem o texto clínico completo. Não há IA para interpretar comandos, regras por seção, banco, API de regras ou configuração remota.
 
 ### Migração para regras no backend (extensão 0.3.0)
 
 Atualize uma vez a extensão em todos os computadores e recarregue as abas do PACS; em seguida publique o backend novo. Essa ordem evita que uma extensão antiga expanda novamente os nomes Chammas presentes nas frases já processadas pelo servidor. Enquanto o backend antigo estiver ativo, a extensão nova insere o texto recebido sem expansão. Depois dessa migração, alterações em comandos e aliases exigem apenas atualizar/reiniciar o backend. Não há banco, painel administrativo ou download de regras para a extensão.
+
+## Interface Clínica da Mama (0.4.0)
+
+A identidade usa a logo oficial e as cores lilás/laranja do [site da Clínica da Mama](https://clinicadamama.com.br/). A logo foi obtida em `https://clinicadamama.com.br/wp-content/uploads/2024/07/logo-clinicadamama.png` em 02/10/2026 e está empacotada em `extension/assets/clinicadamama-logo.png`; não há requisição ao site da clínica durante o uso. Ícones SVG locais substituem os emojis. O design foi orientado pela skill [frontend-design](https://github.com/anthropics/skills/blob/main/skills/frontend-design/SKILL.md).
+
+O painel é uma camada ancorada às dimensões do editor, com espaço mínimo reservado e restauração dos atributos/estilos ao fechar. O editor mantém seu documento ProseMirror; não recebe botões, logo ou outros nós da extensão. O cabeçalho e as ações ficam visíveis enquanto os detalhes têm rolagem própria. Não há mais arrastar/minimizar: o X dá acesso ao campo nativo e o botão de reabertura permanece disponível.
+
+Durante a gravação há cronômetro, ponto pulsante e animação de atividade (decorativa; não representa nível de volume). `prefers-reduced-motion` desativa a animação. Ao fechar gravando, o áudio é finalizado e mantido para reprodução/transcrição ao reabrir. Ao fechar durante uma requisição, a operação é cancelada para impedir inserções tardias sobre uma edição manual. Fechar o painel não reativa a escuta nativa do Eden.
+
+Os detalhes dos comandos e a transcrição para recuperação ficam apenas na memória da aba até Novo ditado/recarregamento; não há histórico persistente. Publique o backend para receber `medicalCommands` e atualize a extensão para 0.4.0. Com um backend 0.3, o painel continua funcionando e mostra apenas a contagem disponível. Valide o tamanho/posicionamento no PACS real, especialmente contêineres com altura fixa.
+
+## Contexto médico da transcrição
+
+O contexto ajuda a reconhecer termos técnicos de ultrassonografia e comandos curtos em português brasileiro. Ele é enviado junto com o áudio, antes da expansão determinística. São duas responsabilidades distintas:
+
+- **Transcrição:** reconhece a fala e preserva números, medidas, negações e lateralidade. Não deve interpretar achados, completar frases ou expandir comandos.
+- **commandProcessor:** recebe o texto transcrito e substitui comandos conhecidos pelas frases fixas cadastradas. Continua no backend, após a transcrição e antes da resposta à extensão.
+
+O vocabulário fica em [`backend/src/config/transcriptionVocabulary.js`](backend/src/config/transcriptionVocabulary.js), na lista `ULTRASOUND_TERMS`. O prompt é montado em [`backend/src/config/transcriptionContext.js`](backend/src/config/transcriptionContext.js). Nesta versão, a lista lexical é mantida separadamente do catálogo: contém termos e comandos, sem os replacements completos e sem importar o processador.
+
+Para adicionar um termo, acrescente uma string à lista, por exemplo `"microcalcificações"`, e reinicie/republique o backend. Use a grafia correta, sem quebras de linha nem `<` ou `>`. Isso orienta o reconhecimento; para criar uma expansão, cadastre também a regra e seus aliases no `commandProcessor` conforme a seção de comandos médicos. Atualizar o vocabulário não exige atualizar a extensão.
+
+Configure no ambiente do backend (ou em `backend/.env`):
+
+```dotenv
+OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
+TRANSCRIPTION_MEDICAL_CONTEXT_ENABLED=true
+```
+
+O contexto fica habilitado por padrão. Use `false` para comparar a transcrição sem prompt médico nem palavras-chave; português continua explícito. Reinicie o backend após alterar o ambiente. Valores diferentes de `true`/`false` são rejeitados com mensagem de configuração.
+
+O serviço envia `prompt`, `keywords` com o vocabulário e `languages: ["pt"]` a `audio.transcriptions.create` para `gpt-transcribe`. A opção `body` segue o exemplo da documentação oficial e foi testada com o SDK instalado, OpenAI 6.49.0. Para modelos anteriores configurados por ENV, usa `language: "pt"` e `prompt`, sem `keywords`; confirme o suporte ao prompt ao trocar de modelo. Não envia `language` e `languages` simultaneamente.
+
+Não há retry automático nem fallback silencioso: se a API rejeitar o parâmetro de contexto, o serviço registra uma orientação para verificar o modelo/limites ou desligar a flag e propaga o erro pelo tratamento existente. Os novos logs registram somente modelo, idioma, estado do contexto, quantidade de termos e duração; não incluem áudio, chave, prompt ou texto clínico.
+
+Exemplos desejados para homologação, sem garantia de correção lexical automática:
+
+| Fala | Transcrição desejada | Etapa seguinte |
+| --- | --- | --- |
+| Chammas três | Chammas 3 | O processor expande a regra Chammas III. |
+| Nódulo sólido da tireoide | Nódulo sólido da tireoide | O processor busca o alias flexível. |
+| Imagem hipoecogênica avascularizada ao Doppler | Imagem hipoecogênica avascularizada ao Doppler | O processor aplica somente regras cadastradas que encontrar. |
+
+Compare os mesmos áudios com a flag ligada e desligada, verificando também se o contexto induz termos não falados. Os testes automatizados validam o contrato de envio; a qualidade do reconhecimento precisa ser avaliada com gravações reais da clínica.
 
 ## Testes automatizados
 
@@ -241,7 +292,9 @@ npm run test:browser
 
 O primeiro comando inclui os testes unitários do processador: aliases, caixa, acentos, múltiplas ocorrências, limites de palavras, pontuação, preservação do texto e logs. Para executar somente esses testes, use `node --test backend/test/commandProcessor.test.js` na raiz. O teste de navegador também verifica a expansão antes de inserir/enviar ao Eden, a contagem no painel e o fallback quando o processador lança um erro.
 
-O segundo comando usa o Google Chrome instalado (`channel: 'chrome'`), um microfone simulado e uma instância real de TipTap 3/ProseMirror. Não chama a OpenAI nem precisa de `.env`. Verifica o estado interno do editor, os métodos de inserção, preservação do texto, tracks encerradas, reprodução, multipart, CORS e bloqueio por mudança de rota. O teste do backend verifica também erros do provedor, entradas inválidas, limite de tamanho e limpeza em sucesso/erro.
+Também inclui `transcriptionService.test.js`: vocabulário/contexto sem replacements, flag habilitada/desabilitada, modelo e timeout por ENV, português, preservação literal da resposta, erros sem retry, limpeza de streams e logs seguros. Um teste usa o SDK real com transporte HTTP simulado para verificar os campos multipart, sem acessar a OpenAI ou usar credenciais reais.
+
+O segundo comando usa o Google Chrome instalado (`channel: 'chrome'`), um microfone simulado e uma instância real de TipTap 3/ProseMirror. Não chama a OpenAI nem precisa de `.env`. Verifica o estado interno do editor, os métodos de inserção, substituição do texto, fechamento/reabertura do painel, detalhes dos comandos, movimento reduzido, tracks encerradas, reprodução, multipart, CORS e bloqueio por mudança de rota. O teste do backend verifica também erros do provedor, entradas inválidas, limite de tamanho e limpeza em sucesso/erro.
 
 Isso não substitui testar o Eden real: a versão e os plugins do editor do PACS podem diferir da fixture. Os testes de navegador carregam os mesmos scripts em uma página local; não automatizam a instalação da extensão nem as permissões do PACS.
 
@@ -252,7 +305,7 @@ Isso não substitui testar o Eden real: a versão e os plugins do editor do PACS
 | `backend/.env` | Chave, modelo, porta, timeout, host e origens CORS. Crie a partir de `.env.example`. |
 | `extension/content/config.js` | `API_BASE_URL`, timeouts, limite de áudio, escopo do editor, identificador do exame, seletores dos controles e `AUTO_SUBMIT`. |
 | `extension/manifest.json` | Domínio onde a extensão é injetada, caso o endereço do PACS mude. |
-| `extension/styles/content.css` | `right` e `bottom` para afastar o painel de botões específicos do Eden. |
+| `extension/styles/content.css` | Cores, tipografia, estados e responsividade do painel ancorado ao editor. |
 
 Se mudar a porta do backend, altere também `API_BASE_URL`. Se mudar o limite de áudio, ajuste também o limite multipart em `backend/src/app.js` e as mensagens de tamanho. A chave nunca sai do backend.
 
@@ -268,7 +321,7 @@ Deve haver um único editor visível pertencente ao Eden AI. Não há dependênc
 
 Se houver vários editores visíveis, configure `EDITOR_CONTAINER_SELECTOR` com um seletor estável do contêiner do **Eden AI**, por exemplo um atributo `data-*` que realmente exista. O código recusa escolher arbitrariamente. Um editor único também precisa ser confirmado como pertencente ao Eden AI na integração real.
 
-`insertTextIntoEden(text)` está isolada em `edenEditor.js`. Ela foca o editor, colapsa a seleção no final, usa `execCommand('insertText')` e, se nada mudar, tenta `ClipboardEvent('paste')`. Depois dispara `InputEvent` e verifica preservação do conteúdo e presença da transcrição. Não atribui `innerHTML` ao editor e não força acesso a objetos privados do React.
+`insertTextIntoEden(text)` está isolada em `edenEditor.js`. Ela foca o editor, seleciona todo o conteúdo, usa `execCommand('insertText')` e, se nada mudar, tenta `ClipboardEvent('paste')`. Depois dispara `InputEvent` e verifica se o conteúdo final corresponde à transcrição. Se o texto já for igual, não o duplica. Se os dois métodos forem recusados sem alterar o documento, o texto anterior permanece; uma alteração parcial é reportada para revisão manual. Não atribui `innerHTML` ao editor e não força acesso a objetos privados do React.
 
 Eventos sintéticos, sozinhos, não garantem alteração do estado interno. A confirmação automática na extensão observa o DOM; os testes conferem o estado ProseMirror da fixture. **A persistência no estado do Eden real precisa ser validada**, incluindo digitação posterior e ação normal do painel. Se o Eden bloquear os dois métodos, o painel apresenta o texto para cópia manual; não insere repetidamente após falha parcial.
 

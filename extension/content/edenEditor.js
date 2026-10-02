@@ -31,17 +31,19 @@
   const plainText = (editor) => editor.innerText.replace(/\r\n/g, '\n');
   const waitForEditor = () => new Promise((resolve) => setTimeout(resolve, 80));
 
-  EV.insertTextIntoEden = async function insertTextIntoEden(text, context = EV.captureContext()) {
+  EV.insertTextIntoEden = async function insertTextIntoEden(text, context = EV.captureContext(), isCurrent = () => true) {
+    const valid = () => isCurrent() && EV.contextIsCurrent(context);
     if (typeof text !== 'string' || !text.trim()) throw new Error('A transcrição não contém texto.');
-    if (!EV.contextIsCurrent(context)) throw new Error('A página ou o editor mudou. Nenhum texto foi inserido.');
+    if (!valid()) throw new Error('A página ou o editor mudou. Nenhum texto foi inserido.');
     const editor = context.editor;
     console.info('[Eden Voice] Editor TipTap encontrado');
     const before = plainText(editor);
-    const addition = (before.trim() ? '\n\n' : '') + text;
+    const addition = text;
+    const comparable = (value) => value.replace(/\s+/g, ' ').trim();
+    if (comparable(before) === comparable(text)) return { method: 'unchanged' };
     editor.focus({ preventScroll: true });
     const range = document.createRange();
     range.selectNodeContents(editor);
-    range.collapse(false);
     const selection = window.getSelection();
     selection.removeAllRanges();
     selection.addRange(range);
@@ -57,14 +59,19 @@
       }
     } catch { /* Tenta paste somente se nada mudou. */ }
     await waitForEditor();
-    if (!EV.contextIsCurrent(context)) throw new Error('A página mudou durante a inserção. Confira o exame antes de continuar.');
+    if (!valid()) throw new Error('A inserção foi cancelada ou a página mudou. Confira o editor antes de continuar.');
     if (plainText(editor) === before) {
       method = 'ClipboardEvent(paste)';
+      // Reafirma a seleção inteira caso o primeiro método tenha movido o cursor.
+      range.selectNodeContents(editor);
+      selection.removeAllRanges();
+      selection.addRange(range);
       const clipboardData = new DataTransfer();
       clipboardData.setData('text/plain', addition);
       editor.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
       await waitForEditor();
     }
+    if (!valid()) throw new Error('A inserção foi cancelada ou a página mudou. Confira o editor antes de continuar.');
     // Eventos sintéticos sozinhos não editam o documento. Não usamos innerHTML como fallback.
     if (plainText(editor) === before) throw new Error('O TipTap recusou a inserção. O texto está disponível abaixo para cópia manual.');
     editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: addition }));
@@ -72,8 +79,7 @@
     if (!EV.contextIsCurrent(context)) throw new Error('A página mudou durante a inserção. Confira o exame antes de continuar.');
     const after = plainText(editor);
     // innerText pode representar parágrafos do ProseMirror com quebras diferentes.
-    const comparable = (value) => value.replace(/\s+/g, ' ').trim();
-    if (comparable(after) !== comparable(before + addition)) {
+    if (comparable(after) !== comparable(text)) {
       throw new Error('Não foi possível confirmar a inserção completa. Confira o editor; não tente inserir novamente sem revisar.');
     }
     console.info(`[Eden Voice] Texto inserido; método: ${method}`);
