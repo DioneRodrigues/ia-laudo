@@ -1,0 +1,21 @@
+// Vocabulário lexical: não incluir frases de replacement nem erros de transcrição.
+export const ULTRASOUND_TERMS = Object.freeze([
+  "Chammas I", "Chammas II", "Chammas III", "Chammas IV", "Chammas V",
+  "Chammas 1", "Chammas 2", "Chammas 3", "Chammas 4", "Chammas 5",
+  "TI-RADS", "BI-RADS",
+  "nódulo", "nódulo sólido", "nódulo sólido-cístico", "nódulo misto",
+  "nódulo espongiforme", "nódulo hipoecogênico", "nódulo hiperecogênico",
+  "imagem nodular", "imagem anecóica", "imagem ecogênica",
+  "imagem hiperecogênica", "imagem hipoecogênica",
+  "ecogenicidade", "ecotextura", "hipoecogênico", "hiperecogênico",
+  "anecóico", "anecoico", "vascularização", "vascularização central",
+  "vascularização periférica", "avascularizado", "avascularizada",
+  "efeito Doppler", "Doppler", "Dopplervelocimetria", "parênquima",
+  "tireoide", "tireóide", "linfonodo", "linfonodo intra-mamário",
+  "ectasia ductal", "endométrio", "miométrio", "adenomiose", "mioma",
+  "hidrossalpinge", "mucométrio", "corpo lúteo", "esteatose",
+  "esteatose hepática", "hemangioma", "angiomiolipoma", "cisto renal",
+  "cisto hepático", "cisto coloide", "cisto hemorrágico", "cálculo renal",
+  "cálculo biliar", "vesícula biliar",
+  "nódulo texto padrão", "nódulo sólido tireoide", "fluxo aumentado",
+]);

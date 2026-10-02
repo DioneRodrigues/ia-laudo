@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,7 +12,9 @@ import { processMedicalCommands } from '../src/services/commandProcessor.js';
 
 test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 60000 }, async (t) => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/editor.js', import.meta.url))], bundle: true, write: false, format: 'iife' });
+  const logo = await readFile(new URL('../../extension/assets/clinicadamama-logo.png', import.meta.url));
   const server = createServer((request, response) => {
+    if (request.url === '/assets/clinicadamama-logo.png') { response.setHeader('Content-Type', 'image/png'); response.end(logo); return; }
     response.setHeader('Content-Type', request.url === '/editor.js' ? 'text/javascript' : 'text/html');
     response.end(request.url === '/editor.js' ? bundle.outputFiles[0].text : '<!doctype html><html><body><div id="editor"></div><script src="/editor.js"></script></body></html>');
   });
@@ -40,6 +42,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.waitForFunction(() => window.testEditor);
     await script('config');
     await page.evaluate((api) => { EdenVoice.CONFIG = { ...EdenVoice.CONFIG, API_BASE_URL: api, AUTO_SUBMIT: false }; }, api);
+    await page.evaluate(() => { window.chrome = { ...window.chrome, runtime: { getURL: (path) => `${location.origin}/${path}` } }; });
     await script('edenEditor');
     if (controller) {
       for (const name of ['recorder', 'edenControls', 'ui', 'content']) await script(name);
@@ -73,9 +76,79 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(await page.evaluate(() => nativeClicks), 0);
     await page.waitForTimeout(250);
     await page.locator('[data-testid="toggle-eden-ai-dictation-button"] svg').click();
-    await page.getByText('✅ Comando enviado ao Eden', { exact: true }).waitFor();
+    await page.getByText('Comando enviado ao Eden', { exact: true }).waitFor();
     assert.deepEqual(await page.evaluate(() => [nativeClicks, submitClicks, submittedText]), [0, 1, 'Texto transcrito de teste.']);
     assert.equal(await page.evaluate(() => testEditor.getText()), '');
+  });
+  await t.test('painel ocupa o editor, fecha para edição manual e reabre sem perder texto', async () => {
+    await prepare(true);
+    await page.evaluate(() => {
+      document.querySelector('#editor').style.cssText = 'width:560px;max-width:100%;margin:70px auto';
+      testEditor.commands.setContent('<p>Rascunho anterior.</p>');
+    });
+    await page.waitForTimeout(100);
+    const editorBox = await page.locator('.tiptap').boundingBox();
+    const panelBox = await page.locator('#eden-voice-transcriber-root').boundingBox();
+    for (const key of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(editorBox[key] - panelBox[key]) < 2);
+    assert.equal(await page.locator('.tiptap #eden-voice-transcriber-root').count(), 0);
+    assert.equal(await page.locator('.ev-logo').evaluate((img) => img.complete && img.naturalWidth > 0), true);
+    await mkdir(new URL('../../test-results/', import.meta.url), { recursive: true });
+    await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/mama-idle.png', import.meta.url)) });
+    await page.getByRole('button', { name: 'Fechar painel' }).click();
+    assert.equal(await page.locator('.ev-panel').isVisible(), false);
+    assert.equal(await page.locator('.tiptap').getAttribute('data-eden-voice-covered'), null);
+    await page.locator('.tiptap').fill('Edição manual.');
+    await page.getByRole('button', { name: 'Abrir ditado da Mama' }).click();
+    assert.equal(await page.locator('.ev-panel').isVisible(), true);
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Edição manual.');
+    await page.setViewportSize({ width: 360, height: 700 });
+    await page.waitForTimeout(100);
+    const narrow = await page.locator('#eden-voice-transcriber-root').boundingBox();
+    assert.ok(narrow.x >= 0 && narrow.x + narrow.width <= 361);
+    assert.equal(await page.locator('.ev-body').evaluate((el) => el.scrollWidth <= el.clientWidth), true);
+    await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/mama-mobile.png', import.meta.url)) });
+    await page.setViewportSize({ width: 1280, height: 720 });
+  });
+  await t.test('indicador de gravação, movimento reduzido e fechar preservam o áudio', async () => {
+    await prepare(true);
+    await page.evaluate(() => {
+      document.querySelector('#editor').style.cssText = 'width:560px;max-width:100%;margin:60px auto';
+      const get = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (...args) => { window.testStream = await get(...args); return testStream; };
+    });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    assert.equal(await page.locator('.ev-record-dot').evaluate((el) => getComputedStyle(el).animationName), 'ev-record-pulse');
+    await page.waitForTimeout(300);
+    await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/mama-recording.png', import.meta.url)) });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    assert.equal(await page.locator('.ev-record-dot').evaluate((el) => getComputedStyle(el).animationName), 'none');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.getByRole('button', { name: 'Fechar painel' }).click();
+    await page.getByRole('button', { name: 'Abrir ditado da Mama' }).waitFor();
+    assert.equal(await page.evaluate(() => testStream.getTracks().every((track) => track.readyState === 'ended')), true);
+    await page.getByRole('button', { name: 'Abrir ditado da Mama' }).click();
+    assert.equal(await page.locator('audio').isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: 'Transcrever', exact: true }).isVisible(), true);
+  });
+  await t.test('fechar durante transcrição impede sobrescrever edição manual', async () => {
+    await prepare(true);
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    await page.route('**/transcribe', async (route) => {
+      await gate;
+      await route.fulfill({ json: { success: true, text: 'Resposta tardia.' } }).catch(() => {});
+    });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'Finalizar' }).click();
+    await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
+    await page.getByRole('button', { name: 'Fechar painel' }).click();
+    await page.locator('.tiptap').fill('Texto manual preservado.');
+    release();
+    await page.unrouteAll({ behavior: 'wait' });
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Texto manual preservado.');
   });
   for (const processorFails of [false, true]) {
     await t.test(`comandos médicos antes de inserir/enviar; fallback=${processorFails}`, async () => {
@@ -88,11 +161,19 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
         await page.getByRole('button', { name: 'Finalizar' }).waitFor();
         await page.waitForTimeout(250);
         await page.locator('[data-testid="toggle-eden-ai-dictation-button"] svg').click();
-        await page.getByText('✅ Comando enviado ao Eden', { exact: true }).waitFor();
+        await page.getByText('Comando enviado ao Eden', { exact: true }).waitFor();
         assert.equal(await page.evaluate(() => submittedText), processorFails ? original
-          : 'Nódulo sólido. nódulo com vascularização periférica e central. Periférica maior ou igual a central (Chammas III).');
+          : 'Nódulo sólido. , ao efeito Doppler observa-se predomínio da vascularização periférica sobre a central (Tipo III de Chammas).');
         assert.equal(await page.locator('.ev-medical-commands').isVisible(), !processorFails);
-        if (!processorFails) assert.equal(await page.locator('.ev-medical-commands').innerText(), '1 comando médico aplicado');
+        if (!processorFails) {
+          assert.equal(await page.locator('.ev-medical-commands').innerText(), '1 comando médico aplicado');
+          assert.equal(await page.locator('.ev-command-list strong').innerText(), 'Tireoide - Chammas III');
+          assert.equal(await page.locator('.ev-alias').innerText(), 'Reconhecido: “chammas 3”');
+          assert.ok((await page.locator('.ev-command-list p').innerText()).includes('predomínio da vascularização periférica sobre a central'));
+          await page.evaluate(() => { document.querySelector('#editor').style.cssText = 'width:560px;max-width:100%;margin:60px auto'; });
+          await page.waitForTimeout(100);
+          await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/mama-commands.png', import.meta.url)) });
+        }
         await page.getByRole('button', { name: 'Novo ditado' }).click();
         assert.equal(await page.locator('.ev-medical-commands').isVisible(), false);
       } finally { transcript = 'Texto transcrito de teste.'; commandFailure = false; }
@@ -214,8 +295,8 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
       button.disabled = false;
       button.click();
     });
-    await page.getByText('✅ Comando enviado ao Eden', { exact: true }).waitFor();
-    assert.deepEqual(await page.evaluate(() => [submitClicks, submittedText]), [1, 'Texto existente.\n\nTexto transcrito de teste.']);
+    await page.getByText('Comando enviado ao Eden', { exact: true }).waitFor();
+    assert.deepEqual(await page.evaluate(() => [submitClicks, submittedText]), [1, 'Texto transcrito de teste.']);
   });
   await t.test('botão indisponível preserva texto e não reenvia nem reinsere', async () => {
     await prepare(true); await nativeControls({ disabled: true });
@@ -256,7 +337,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.evaluate(() => EdenVoice.insertTextIntoEden('Primeiro texto.'));
     assert.equal(await page.evaluate(() => testEditor.getText()), 'Primeiro texto.');
     await page.evaluate(() => EdenVoice.insertTextIntoEden('Segundo texto.'));
-    assert.equal(await page.evaluate(() => testEditor.getText()), 'Primeiro texto.\n\nSegundo texto.');
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Segundo texto.');
     await page.keyboard.type(' Continuacao.');
     assert.ok((await page.evaluate(() => testEditor.getText())).endsWith('Segundo texto. Continuacao.'));
   });
@@ -265,17 +346,33 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.evaluate(() => { document.execCommand = () => false; testEditor.commands.setContent('<p>Existente.</p>'); });
     const result = await page.evaluate(() => EdenVoice.insertTextIntoEden('Novo texto.'));
     assert.equal(result.method, 'ClipboardEvent(paste)');
-    assert.equal(await page.evaluate(() => testEditor.getText()), 'Existente.\n\nNovo texto.');
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Novo texto.');
   });
   await t.test('inserção parcial não é confundida com sucesso nem repetida', async () => {
     await prepare();
     await page.evaluate(() => {
-      testEditor.commands.setContent('<p>Mesmo texto.</p>');
+      testEditor.commands.setContent('<p>Texto anterior.</p>');
       const exec = document.execCommand.bind(document);
-      document.execCommand = (command, ...args) => command === 'insertText' ? false : exec(command, ...args);
+      document.execCommand = (command, ...args) => command === 'insertLineBreak' ? false : exec(command, ...args);
     });
-    await assert.rejects(page.evaluate(() => EdenVoice.insertTextIntoEden('Mesmo texto.')), /confirmar a inserção completa/);
-    assert.equal(await page.evaluate(() => testEditor.getText().trim()), 'Mesmo texto.');
+    await assert.rejects(page.evaluate(() => EdenVoice.insertTextIntoEden('Linha um.\nLinha dois.')), /confirmar a inserção completa/);
+    assert.equal(await page.evaluate(() => testEditor.getText().trim()), 'Linha um.');
+  });
+  await t.test('substituição por texto idêntico não duplica nem falha', async () => {
+    await prepare();
+    await page.evaluate(() => testEditor.commands.setContent('<p>Mesmo texto.</p>'));
+    assert.equal((await page.evaluate(() => EdenVoice.insertTextIntoEden('Mesmo texto.'))).method, 'unchanged');
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Mesmo texto.');
+  });
+  await t.test('ambos os métodos recusados preservam texto anterior', async () => {
+    await prepare();
+    await page.evaluate(() => {
+      testEditor.commands.setContent('<p>Texto anterior.</p>');
+      document.execCommand = () => false;
+      document.querySelector('.tiptap').addEventListener('paste', (event) => event.stopImmediatePropagation(), true);
+    });
+    await assert.rejects(page.evaluate(() => EdenVoice.insertTextIntoEden('Novo texto.')), /recusou a inserção/);
+    assert.equal(await page.evaluate(() => testEditor.getText()), 'Texto anterior.');
   });
   await t.test('não interpreta HTML nem escolhe entre dois editores', async () => {
     await prepare();
@@ -299,7 +396,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(await page.evaluate(() => testStream.getTracks().every((track) => track.readyState === 'ended')), true);
     await page.locator('audio').evaluate((audio) => audio.play());
     await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
-    await page.getByText('✅ Texto inserido no Eden', { exact: true }).waitFor();
+    await page.getByText('Texto inserido no Eden', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => testEditor.getText()), 'Texto transcrito de teste.');
     assert.equal(await page.locator('#eden-voice-transcriber-root').count(), 1);
     assert.equal(await page.locator('audio').getAttribute('src'), null);

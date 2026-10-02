@@ -21,7 +21,7 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
   await t.test('sucesso e remoção antes da resposta', async () => {
     const response = await app.inject(upload());
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { success: true, text: 'Texto de teste.', medicalCommandCount: 0 });
+    assert.deepEqual(response.json(), { success: true, text: 'Texto de teste.', medicalCommandCount: 0, medicalCommands: [] });
     assert.equal(response.headers['access-control-allow-origin'], 'https://pacs.evacenter.com');
     assert.deepEqual(await readdir(uploadsDir), []);
   });
@@ -31,7 +31,11 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
     assert.equal(response.statusCode, 200);
     assert.deepEqual(response.json(), {
       success: true, medicalCommandCount: 2,
-      text: 'sem vascularização (Chammas I). nódulo apenas com vascularização central (Chammas V).',
+      medicalCommands: [
+        { id: 'chammas-1', label: 'Tireoide - Chammas I', alias: 'chammas 1', detectedText: 'Chammas 1', replacement: ', avascularizada ao efeito Doppler (Tipo I de Chammas).' },
+        { id: 'chammas-5', label: 'Tireoide - Chammas V', alias: 'chammas 5', detectedText: 'Chammas 5', replacement: 'nódulo apenas com vascularização central (Chammas V).' },
+      ],
+      text: ', avascularizada ao efeito Doppler (Tipo I de Chammas). nódulo apenas com vascularização central (Chammas V).',
     });
     assert.deepEqual(await readdir(uploadsDir), []);
   });
@@ -85,6 +89,6 @@ test('falha nos comandos preserva transcrição e resposta de sucesso', async (t
   t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
   const response = await app.inject(upload());
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { success: true, text: original, medicalCommandCount: 0 });
+  assert.deepEqual(response.json(), { success: true, text: original, medicalCommandCount: 0, medicalCommands: [] });
   assert.deepEqual(await readdir(uploadsDir), []);
 });

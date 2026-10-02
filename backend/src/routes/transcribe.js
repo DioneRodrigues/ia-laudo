@@ -13,6 +13,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
   app.post('/transcribe', async (request, reply) => {
     let directory, filePath, size = 0, text, failure;
     let medicalCommandCount = 0;
+    let medicalCommands = [];
     const started = performance.now();
     const controller = new AbortController();
     const abort = () => { if (!reply.raw.writableEnded) controller.abort(); };
@@ -44,6 +45,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
         if (typeof processedText !== 'string' || !processedText.trim()) throw new Error('Resultado inválido');
         text = processedText;
         medicalCommandCount = details.count || 0;
+        medicalCommands = details.commands || [];
       } catch {
         app.log.error('[Eden Voice] Erro ao processar comandos; mantendo transcrição original');
         text = originalText;
@@ -67,6 +69,6 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     }
     const statusCode = failure?.statusCode || 200;
     app.log.info({ event: 'transcription', durationMs: Math.round(performance.now() - started), bytes: size, success: !failure, statusCode });
-    return reply.code(statusCode).send(failure ? { success: false, error: failure.message } : { success: true, text, medicalCommandCount });
+    return reply.code(statusCode).send(failure ? { success: false, error: failure.message } : { success: true, text, medicalCommandCount, medicalCommands });
   });
 }
