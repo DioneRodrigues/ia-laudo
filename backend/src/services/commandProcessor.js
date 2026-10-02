@@ -13,6 +13,7 @@ const MEDICAL_COMMANDS = [
       "nodulo texto padrao tireoide",
       "nodulo solido tireoide",
       "nodulo hipoecoico",
+      "nodulo hipoicoico",
     ],
     replacement:
       "Observa-se no @, uma imagem nodular sólida hipoecogênica, textura heterogênea, contendo fino halo anecóico periférico, contornos regulares, limites bem definidos, discreto reforço acústico posterior, medindo @ cm.",
