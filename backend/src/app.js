@@ -5,6 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import transcribeRoutes from './routes/transcribe.js';
 import { transcribeAudio } from './services/transcriptionService.js';
+import { processMedicalCommands } from './services/commandProcessor.js';
 
 export async function buildApp(options = {}) {
   const app = Fastify({ logger: options.logger ?? true, logController: new LogController({ disableRequestLogging: true }), requestTimeout: 180000, bodyLimit: 21 * 1024 * 1024 });
@@ -25,7 +26,8 @@ export async function buildApp(options = {}) {
   const uploadsDir = options.uploadsDir || fileURLToPath(new URL('../uploads/', import.meta.url));
   await mkdir(uploadsDir, { recursive: true, mode: 0o700 });
   app.get('/health', async () => ({ success: true }));
-  await app.register(transcribeRoutes, { uploadsDir, transcribeAudio: options.transcribeAudio || transcribeAudio });
+  await app.register(transcribeRoutes, { uploadsDir, transcribeAudio: options.transcribeAudio || transcribeAudio,
+    processMedicalCommands: options.processMedicalCommands || processMedicalCommands });
   app.setErrorHandler((error, request, reply) => {
     const statusCode = error.statusCode >= 400 && error.statusCode < 500 ? error.statusCode : 500;
     app.log.warn({ event: 'request_failed', statusCode });

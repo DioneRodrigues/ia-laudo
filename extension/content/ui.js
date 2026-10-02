@@ -6,6 +6,7 @@
     // Template estático; nenhum conteúdo clínico é interpolado em HTML.
     root.innerHTML = `<header><strong>🎙 Transcrição</strong><button type="button" class="ev-minimize" aria-label="Minimizar painel" aria-expanded="true">−</button></header>
       <div class="ev-body"><p class="ev-status" role="status" aria-live="polite"></p>
+      <p class="ev-medical-commands" role="status" hidden></p>
       <output class="ev-timer">00:00</output><audio controls aria-label="Ouvir gravação" hidden></audio>
       <p class="ev-error" role="alert" hidden></p>
       <div class="ev-recovery" hidden><label>Transcrição para cópia manual<textarea readonly rows="5"></textarea></label></div>
@@ -67,11 +68,14 @@
         get('.ev-timer').textContent = [ ...(hours ? [hours] : []), Math.floor(seconds / 60) % 60, seconds % 60 ]
           .map((n) => String(n).padStart(2, '0')).join(':');
       },
-      render({ state, error = '', audioURL = '', text = '' }) {
+      render({ state, error = '', audioURL = '', text = '', medicalCommandCount = 0 }) {
         const titles = { idle: 'Pronto para gravar', requesting: 'Aguardando microfone…', recording: '🔴 Gravando', stopping: 'Finalizando…', ready: 'Gravação concluída', transcribing: '⏳ Transcrevendo… Aguarde', success: '✅ Texto inserido no Eden', recovery: 'Transcrição recebida', error: 'Não foi possível concluir' };
         titles.submitting = 'Texto inserido. Enviando ao Eden…';
         titles.sent = '✅ Comando enviado ao Eden';
         get('.ev-status').textContent = titles[state];
+        get('.ev-medical-commands').hidden = medicalCommandCount === 0;
+        get('.ev-medical-commands').textContent = medicalCommandCount === 1
+          ? '1 comando médico aplicado' : `${medicalCommandCount} comandos médicos aplicados`;
         get('strong').textContent = state === 'recording' ? '🔴 Gravando' : '🎙 Transcrição';
         get('.ev-error').textContent = error;
         get('.ev-error').hidden = !error;

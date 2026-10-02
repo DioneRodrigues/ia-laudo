@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { buildApp } from '../src/app.js';
+import { processMedicalCommands } from '../src/services/commandProcessor.js';
 
 test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 60000 }, async (t) => {
   const bundle = await build({ entryPoints: [fileURLToPath(new URL('./fixtures/editor.js', import.meta.url))], bundle: true, write: false, format: 'iife' });
@@ -19,8 +20,14 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
   t.after(() => new Promise((resolve) => server.close(resolve)));
   const origin = `http://127.0.0.1:${server.address().port}`;
   const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-browser-'));
-  const app = await buildApp({ logger: false, uploadsDir, corsOrigin: origin, transcribeAudio: async (path) => {
-    assert.ok((await readFile(path)).length > 0); return 'Texto transcrito de teste.';
+  let transcript = 'Texto transcrito de teste.';
+  let commandFailure = false;
+  const app = await buildApp({ logger: false, uploadsDir, corsOrigin: origin,
+    processMedicalCommands: (...args) => {
+      if (commandFailure) throw new Error('Falha simulada');
+      return processMedicalCommands(...args);
+    }, transcribeAudio: async (path) => {
+    assert.ok((await readFile(path)).length > 0); return transcript;
   } });
   const api = await app.listen({ port: 0, host: '127.0.0.1' });
   t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
@@ -70,6 +77,27 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.deepEqual(await page.evaluate(() => [nativeClicks, submitClicks, submittedText]), [0, 1, 'Texto transcrito de teste.']);
     assert.equal(await page.evaluate(() => testEditor.getText()), '');
   });
+  for (const processorFails of [false, true]) {
+    await t.test(`comandos médicos antes de inserir/enviar; fallback=${processorFails}`, async () => {
+      await prepare(true); await nativeControls();
+      const original = 'Nódulo sólido. Chammas 3.';
+      transcript = original;
+      commandFailure = processorFails;
+      try {
+        await page.locator('[data-testid="toggle-eden-ai-dictation-button"] svg').click();
+        await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+        await page.waitForTimeout(250);
+        await page.locator('[data-testid="toggle-eden-ai-dictation-button"] svg').click();
+        await page.getByText('✅ Comando enviado ao Eden', { exact: true }).waitFor();
+        assert.equal(await page.evaluate(() => submittedText), processorFails ? original
+          : 'Nódulo sólido. nódulo com vascularização periférica e central. Periférica maior ou igual a central (Chammas III).');
+        assert.equal(await page.locator('.ev-medical-commands').isVisible(), !processorFails);
+        if (!processorFails) assert.equal(await page.locator('.ev-medical-commands').innerText(), '1 comando médico aplicado');
+        await page.getByRole('button', { name: 'Novo ditado' }).click();
+        assert.equal(await page.locator('.ev-medical-commands').isVisible(), false);
+      } finally { transcript = 'Texto transcrito de teste.'; commandFailure = false; }
+    });
+  }
   await t.test('pausa nativa é confirmada antes de abrir o microfone', async () => {
     await prepare(true); await nativeControls({ active: true });
     await page.evaluate(() => {
@@ -82,6 +110,87 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.getByRole('button', { name: 'Iniciar gravação' }).click();
     await page.getByRole('button', { name: 'Finalizar' }).waitFor();
     assert.deepEqual(await page.evaluate(() => [nativeClicks, pausedBeforeMicrophone]), [1, true]);
+  });
+  await t.test('reativação durante permissão do microfone é pausada imediatamente', async () => {
+    await prepare(true); await nativeControls();
+    await page.evaluate(() => {
+      const get = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = async (...args) => {
+        document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent = 'Escutando';
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        window.pausedDuringPermission = document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent.includes('pausa');
+        return get(...args);
+      };
+    });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    assert.deepEqual(await page.evaluate(() => [nativeClicks, pausedDuringPermission]), [1, true]);
+  });
+  await t.test('vigia reativações e remontagens sem repetir clique durante pausa pendente', async () => {
+    await prepare(true); await nativeControls();
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    await page.evaluate(() => {
+      const button = document.querySelector('[data-testid="toggle-eden-ai-dictation-button"]');
+      button.onclick = () => {
+        nativeClicks++;
+        setTimeout(() => button.setAttribute('aria-pressed', 'false'), 150);
+      };
+      // O rótulo antigo ainda diz pausado; aria-pressed informa a reativação.
+      button.setAttribute('aria-pressed', 'true');
+    });
+    await page.waitForFunction(() => document.querySelector('[data-testid="toggle-eden-ai-dictation-button"]').getAttribute('aria-pressed') === 'false');
+    assert.equal(await page.evaluate(() => nativeClicks), 1);
+    await page.evaluate(() => {
+      const old = document.querySelector('[data-testid="toggle-eden-ai-dictation-button"]');
+      const button = old.cloneNode(true);
+      button.removeAttribute('aria-pressed');
+      button.querySelector('span').textContent = 'Escutando';
+      button.onclick = () => { nativeClicks++; button.querySelector('span').textContent = 'Escuta em pausa.'; };
+      old.replaceWith(button);
+    });
+    await page.waitForFunction(() => nativeClicks === 2);
+    assert.equal(await page.getByRole('button', { name: 'Finalizar' }).isVisible(), true);
+    await page.getByRole('button', { name: 'Finalizar' }).click();
+    await page.getByRole('button', { name: 'Descartar' }).click();
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent = 'Escutando';
+    });
+    await page.waitForTimeout(350);
+    await page.waitForFunction(() => nativeClicks === 3);
+    assert.equal(await page.evaluate(() => nativeClicks), 3);
+  });
+  await t.test('proteção permanente pausa Eden antes de Novo ditado e sem abrir microfone', async () => {
+    await prepare(true);
+    await page.evaluate(() => {
+      window.micRequests = 0;
+      const get = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      navigator.mediaDevices.getUserMedia = (...args) => { micRequests++; return get(...args); };
+      testEditor.destroy();
+      document.querySelector('#editor').replaceChildren();
+    });
+    await nativeControls({ active: true });
+    await page.waitForFunction(() => nativeClicks === 1);
+    assert.equal(await page.evaluate(() => micRequests), 0);
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent = 'Escutando';
+    });
+    await page.waitForFunction(() => nativeClicks === 2);
+    assert.equal(await page.evaluate(() => micRequests), 0);
+  });
+  await t.test('se Eden recusar pausa durante gravação, finaliza e preserva áudio', async () => {
+    await prepare(true); await nativeControls({ pauseFails: true });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    await page.waitForTimeout(250);
+    await page.evaluate(() => {
+      document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent = 'Escutando';
+    });
+    await page.getByRole('alert').filter({ hasText: 'O Eden não confirmou a pausa' }).waitFor();
+    assert.equal(await page.evaluate(() => nativeClicks), 1);
+    assert.equal(await page.getByRole('button', { name: 'Transcrever', exact: true }).isVisible(), true);
+    assert.equal(await page.locator('audio').isVisible(), true);
+    assert.ok(await page.locator('audio').getAttribute('src'));
   });
   for (const options of [{ unknown: true }, { active: true, pauseFails: true }]) {
     await t.test(`não abre microfone sem pausa confirmada: ${JSON.stringify(options)}`, async () => {

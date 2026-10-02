@@ -3,15 +3,17 @@
   if (EV.initialized) return;
   EV.initialized = true;
   console.info('[Eden Voice] Extensão carregada');
-  let ui, recorder, context, blob, audioURL, timer, controller;
+  let ui, recorder, context, blob, audioURL, timer, controller, stopPauseWatch;
   let state = 'idle', error = '', text = '', epoch = 0;
-  const draw = () => ui?.render({ state, error, audioURL, text });
+  let medicalCommandCount = 0;
+  const draw = () => ui?.render({ state, error, audioURL, text, medicalCommandCount });
   const fail = (message, next = 'error') => {
     error = message; state = next;
     console.error(`[Eden Voice] ERROR: ${message}`);
     draw();
   };
   const releaseAudio = () => {
+    stopPauseWatch?.(); stopPauseWatch = null;
     clearInterval(timer);
     recorder?.dispose(); recorder = null; blob = null;
     if (audioURL) URL.revokeObjectURL(audioURL);
@@ -20,6 +22,7 @@
   const reset = () => {
     epoch++; controller?.abort(); controller = null;
     releaseAudio(); context = null; text = ''; error = ''; state = 'idle';
+    medicalCommandCount = 0;
     ui?.time(0); draw();
   };
   const start = async () => {
@@ -31,6 +34,17 @@
       state = 'requesting'; error = ''; draw();
       await EV.ensureEdenPaused(context, () => operation === epoch);
       if (operation !== epoch) return;
+      stopPauseWatch = EV.watchEdenPaused(context,
+        () => operation === epoch && ['requesting', 'recording'].includes(state),
+        async (failure) => {
+          if (state === 'recording') {
+            // Finaliza e preserva o áudio já capturado para reprodução/transcrição.
+            await stop();
+            if (operation === epoch && state === 'ready') fail(failure.message, 'ready');
+          } else {
+            epoch++; releaseAudio(); fail(failure.message);
+          }
+        });
       recorder = new EV.AudioRecorder((failure) => {
         epoch++; releaseAudio(); fail(failure.message);
       });
@@ -47,6 +61,7 @@
   };
   const stop = async (autoTranscribe = false) => {
     if (state !== 'recording') return;
+    stopPauseWatch?.(); stopPauseWatch = null;
     const operation = epoch;
     clearInterval(timer); state = 'stopping'; draw();
     try {
@@ -81,7 +96,10 @@
       if (typeof data.text !== 'string' || !data.text.trim()) throw new Error('Resposta do backend sem text válido.');
       if (operation !== epoch) return;
       console.info('[Eden Voice] Transcrição recebida');
+      // O backend já retorna o texto final; não expandir comandos novamente.
       text = data.text;
+      medicalCommandCount = Number.isSafeInteger(data.medicalCommandCount) && data.medicalCommandCount >= 0
+        ? data.medicalCommandCount : 0;
       releaseAudio();
       if (!EV.contextIsCurrent(context)) throw new Error('A página mudou durante a transcrição. Confira o exame e copie o texto manualmente.');
       await EV.insertTextIntoEden(text, context);

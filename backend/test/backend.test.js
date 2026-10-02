@@ -21,8 +21,18 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
   await t.test('sucesso e remoção antes da resposta', async () => {
     const response = await app.inject(upload());
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { success: true, text: 'Texto de teste.' });
+    assert.deepEqual(response.json(), { success: true, text: 'Texto de teste.', medicalCommandCount: 0 });
     assert.equal(response.headers['access-control-allow-origin'], 'https://pacs.evacenter.com');
+    assert.deepEqual(await readdir(uploadsDir), []);
+  });
+  await t.test('expande comandos no backend e retorna a contagem', async () => {
+    provider = async () => 'Chammas 1. Chammas 5.';
+    const response = await app.inject(upload());
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      success: true, medicalCommandCount: 2,
+      text: 'sem vascularização (Chammas I). nódulo apenas com vascularização central (Chammas V).',
+    });
     assert.deepEqual(await readdir(uploadsDir), []);
   });
   await t.test('erro do provedor não vaza conteúdo e remove áudio', async () => {
@@ -63,4 +73,18 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
   await t.test('JSON não substitui multipart', async () => {
     assert.equal((await app.inject({ method: 'POST', url: '/transcribe', payload: { audio: 'x' } })).statusCode, 415);
   });
+});
+
+test('falha nos comandos preserva transcrição e resposta de sucesso', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-fallback-'));
+  const original = 'Nódulo sólido. Chammas 3.';
+  const app = await buildApp({ logger: false, uploadsDir,
+    transcribeAudio: async () => original,
+    processMedicalCommands: () => { throw new Error('conteúdo clínico privado'); },
+  });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  const response = await app.inject(upload());
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { success: true, text: original, medicalCommandCount: 0 });
+  assert.deepEqual(await readdir(uploadsDir), []);
 });

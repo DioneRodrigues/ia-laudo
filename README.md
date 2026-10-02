@@ -1,6 +1,6 @@
 # Eden Voice Transcriber
 
-MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e acrescenta a transcrição ao editor Eden AI. Sem banco, histórico, glossário, correção, normalização, login ou streaming.
+MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e acrescenta a transcrição ao editor Eden AI. Inclui expansão determinística no backend de comandos médicos. Sem banco, histórico, cadastro dinâmico de regras, login ou streaming.
 
 ## Arquitetura
 
@@ -8,14 +8,15 @@ MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava u
 Microfone → MediaRecorder no content script → Blob em memória
        → POST /transcribe (multipart, campo audio)
        → arquivo temporário → serviço OpenAI → remoção em finally
-       → { success: true, text } → editor TipTap/ProseMirror
+       → commandProcessor no backend
+       → { success: true, text, medicalCommandCount } → editor TipTap/ProseMirror
 ```
 
 A extensão usa JavaScript puro e não precisa de build. Os scripts compartilham um namespace no mundo isolado do content script. O `MutationObserver` espera pelo editor, mantém um único painel e detecta remoção/substituição do editor. Uma sondagem de 500 ms também detecta mudanças de URL sem mutação DOM.
 
 O `fetch` parte do content script; sua origem é a página PACS. O backend permite explicitamente essa origem. A extensão não precisa de service worker, `tabs`, `storage`, `scripting`, acesso a todos os sites ou chave de API. A única regra de injeção é o domínio do PACS no manifest. A permissão de microfone é solicitada pela página após o clique.
 
-`services/transcriptionService.js` usa o SDK oficial (`client.audio.transcriptions.create`) e o modelo configurável `gpt-transcribe`, conforme a [documentação oficial de transcrição de arquivos](https://developers.openai.com/api/docs/guides/speech-to-text), consultada em 29/09/2026. Para trocar o provedor, mantenha `transcribeAudio(filePath, { signal })` retornando uma string. Não há processamento posterior do texto.
+`services/transcriptionService.js` usa o SDK oficial (`client.audio.transcriptions.create`) e o modelo configurável `gpt-transcribe`, conforme a [documentação oficial de transcrição de arquivos](https://developers.openai.com/api/docs/guides/speech-to-text), consultada em 29/09/2026. Para trocar o provedor, mantenha `transcribeAudio(filePath, { signal })` retornando uma string. No backend, os comandos médicos conhecidos são expandidos após a transcrição e antes da inserção.
 
 ## Estrutura
 
@@ -43,10 +44,12 @@ extenssao-eden-ia/
     │   ├── app.js
     │   ├── server.js
     │   ├── routes/transcribe.js
+    │   ├── services/commandProcessor.js
     │   └── services/transcriptionService.js
     ├── uploads/.gitkeep
     └── test/
         ├── backend.test.js
+        ├── commandProcessor.test.js
         ├── browser.test.js
         └── fixtures/editor.js
 ```
@@ -151,7 +154,9 @@ Após editar os arquivos da extensão, clique em recarregar na página de extens
 
 Clique no botão nativo de ditado (`data-testid="toggle-eden-ai-dictation-button"`) para iniciar a extensão. Clique novamente para **finalizar e transcrever automaticamente**. Depois da inserção validada, a extensão aguarda o botão `data-testid="execute-eden-ai-command-button"` habilitar e clica uma única vez em **Criar relatório**. O processamento/substituição do relatório é realizado pelo próprio Eden; a mensagem “Comando enviado ao Eden” confirma o clique, não a conclusão do relatório.
 
-O clique do ditado é interceptado em captura, inclusive quando o alvo é um SVG interno. Se o controle informa **Escuta em pausa.**, a ação nativa é bloqueada e somente a extensão grava. Se indica `aria-pressed="true"`, “Escutando”, “Ouvindo”, “Escuta ativa” ou “Pausar escuta”, é enviado um clique nativo para pausar e a confirmação é aguardada antes de solicitar o microfone. Estado desconhecido ou ausência de confirmação impede a gravação. Esses indicadores de estado ativo precisam ser conferidos no PACS real, pois o HTML fornecido mostra apenas o estado pausado. O código não tem acesso direto às tracks privadas do Eden; depende de seu controle confirmar a pausa.
+O clique do ditado é interceptado em captura, inclusive quando o alvo é um SVG interno. Se o controle informa **Escuta em pausa.**, a ação nativa é bloqueada e somente a extensão grava. Se indica `aria-pressed="true"`, “Escutando”, “Ouvindo”, “Escuta ativa” ou “Pausar escuta”, é enviado um clique nativo para pausar e a confirmação é aguardada antes de solicitar o microfone. Quando presente, `aria-pressed` prevalece sobre o texto durante transições. Estado desconhecido ou ausência de confirmação impede a gravação. O código não tem acesso direto às tracks privadas do Eden; depende de seu controle confirmar a pausa. O SVG animado, sozinho, não permite distinguir captura ativa de pausada.
+
+Durante a solicitação do microfone e a gravação, um `MutationObserver` vigia reativações da escuta e remontagens do botão, com verificação adicional a cada 250 ms. Ao detectar reativação, solicita a pausa imediatamente, sem repetir cliques enquanto aguarda a confirmação. Se a pausa falhar, finaliza a gravação e mantém o áudio já capturado disponível para reprodução/transcrição. Além dessa proteção durante a gravação, a extensão mantém a escuta nativa pausada desde o carregamento, mesmo antes de “Novo ditado”, após finalizar/descartar e quando o painel Eden acaba de abrir. Essa vigilância permanente não solicita o microfone da extensão: apenas pausa o controle nativo quando seu estado indica captura ativa. O botão de ditado do Eden continua sendo um atalho para gravar pela extensão. Tentativas simultâneas compartilham um único clique de pausa; uma falha não provoca cliques contínuos. A vigilância é suspensa ao sair da página e retomada ao restaurá-la pelo navegador.
 
 Os listeners são delegados e continuam funcionando quando o React recria os botões. Enquanto a extensão grava/processa, cliques manuais em Criar relatório são bloqueados para evitar envio prematuro ou duplicado. Troca de exame cancela também a espera pelo botão. Falha de inserção impede o clique; botão ausente/desabilitado após o timeout mantém o texto disponível e orienta o envio manual, sem retranscrever.
 
@@ -183,7 +188,7 @@ curl -X POST http://localhost:3001/transcribe \
 Respostas:
 
 ```json
-{ "success": true, "text": "Texto transcrito." }
+{ "success": true, "text": "Texto transcrito.", "medicalCommandCount": 0 }
 ```
 
 ```json
@@ -191,6 +196,39 @@ Respostas:
 ```
 
 Formatos aceitos: WebM, Ogg, MP4, MP3 e WAV, com MIME compatível. O nome original do upload nunca é usado para criar caminhos. O backend limita tamanho e formato declarado; o provedor valida se o conteúdo contém áudio decodificável.
+
+## Comandos médicos (V1)
+
+Comandos médicos são aliases conhecidos substituídos por frases fixas no backend. O fluxo é **gravação → transcrição → processamento de comandos no backend → inserção no Eden**. A rota `backend/src/routes/transcribe.js` chama `processMedicalCommands` após validar o texto do provedor. `/transcribe` retorna `text` já processado e `medicalCommandCount`. A extensão insere esse texto sem reprocessá-lo e usa a contagem para mostrar “1 comando médico aplicado” ou a quantidade no plural. Respostas de um backend antigo, sem contagem, continuam aceitas pela extensão (contagem zero).
+
+As regras ficam na lista `MEDICAL_COMMANDS` de `backend/src/services/commandProcessor.js`. A V1 inclui Chammas 1 a 5, com as frases cadastradas, números por extenso e romanos. A busca ignora maiúsculas/minúsculas; “três” e “tres” são aliases explícitos. O restante do texto, incluindo acentos, espaços e quebras de linha, é preservado. Limites Unicode evitam matches dentro de palavras e números maiores. As substituições acontecem em uma única passagem, sem reprocessar as frases inseridas. Um ponto imediatamente após o alias é aproveitado quando a frase já termina com ponto, evitando `..`; outras pontuações são preservadas.
+
+Exemplos:
+
+| Entrada | Saída |
+| --- | --- |
+| `Chammas 1` | `sem vascularização (Chammas I).` |
+| `Nódulo sólido. Chammas três.` | `Nódulo sólido. nódulo com vascularização periférica e central. Periférica maior ou igual a central (Chammas III).` |
+| `Nódulo A Chammas 2. Nódulo B Chammas 4.` | `Nódulo A nódulo apenas com vascularização periférica (Chammas II). Nódulo B nódulo com vascularização central e periférica. Predomínio da central (Chammas IV).` |
+| `Fígado normal.` | `Fígado normal.` |
+
+Para adicionar um comando, acrescente um objeto à lista (exemplo de estrutura; substitua a frase ilustrativa antes de usar):
+
+```js
+{
+  id: 'tirads-3',
+  aliases: ['tirads 3', 'ti rads 3'],
+  replacement: 'Frase cadastrada para este comando.',
+},
+```
+
+Para aceitar outra grafia, acrescente uma string ao array `aliases` da regra correspondente. Use aliases únicos entre regras. O motor é genérico: não exige lógica específica para novas categorias. Após editar as regras, reinicie o backend ou faça um novo deploy no EasyPanel. Todas as extensões que usam esse backend recebem as novas expansões na próxima transcrição, sem atualização local.
+
+Sem match, a transcrição segue exatamente como recebida. Se o processador falhar, o backend registra uma mensagem e retorna o texto original com contagem zero e resposta de sucesso. Os logs `[Eden Voice]` do backend mostram somente eventos, ID, alias e quantidade de substituições, sem o texto clínico completo. Não há IA para interpretar comandos, regras por seção, banco, API de regras ou configuração remota.
+
+### Migração para regras no backend (extensão 0.3.0)
+
+Atualize uma vez a extensão em todos os computadores e recarregue as abas do PACS; em seguida publique o backend novo. Essa ordem evita que uma extensão antiga expanda novamente os nomes Chammas presentes nas frases já processadas pelo servidor. Enquanto o backend antigo estiver ativo, a extensão nova insere o texto recebido sem expansão. Depois dessa migração, alterações em comandos e aliases exigem apenas atualizar/reiniciar o backend. Não há banco, painel administrativo ou download de regras para a extensão.
 
 ## Testes automatizados
 
@@ -200,6 +238,8 @@ Dentro de `backend/`:
 npm test
 npm run test:browser
 ```
+
+O primeiro comando inclui os testes unitários do processador: aliases, caixa, acentos, múltiplas ocorrências, limites de palavras, pontuação, preservação do texto e logs. Para executar somente esses testes, use `node --test backend/test/commandProcessor.test.js` na raiz. O teste de navegador também verifica a expansão antes de inserir/enviar ao Eden, a contagem no painel e o fallback quando o processador lança um erro.
 
 O segundo comando usa o Google Chrome instalado (`channel: 'chrome'`), um microfone simulado e uma instância real de TipTap 3/ProseMirror. Não chama a OpenAI nem precisa de `.env`. Verifica o estado interno do editor, os métodos de inserção, preservação do texto, tracks encerradas, reprodução, multipart, CORS e bloqueio por mudança de rota. O teste do backend verifica também erros do provedor, entradas inválidas, limite de tamanho e limpeza em sucesso/erro.
 

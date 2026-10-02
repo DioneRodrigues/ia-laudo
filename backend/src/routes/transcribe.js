@@ -9,9 +9,10 @@ const formats = new Map([
 ]);
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
 
-export default async function transcribeRoutes(app, { uploadsDir, transcribeAudio }) {
+export default async function transcribeRoutes(app, { uploadsDir, transcribeAudio, processMedicalCommands }) {
   app.post('/transcribe', async (request, reply) => {
     let directory, filePath, size = 0, text, failure;
+    let medicalCommandCount = 0;
     const started = performance.now();
     const controller = new AbortController();
     const abort = () => { if (!reply.raw.writableEnded) controller.abort(); };
@@ -36,6 +37,17 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
       if (!filePath) throw httpError(400, 'Arquivo audio não encontrado.');
       text = await transcribeAudio(filePath, { signal: controller.signal });
       if (typeof text !== 'string' || !text.trim()) throw httpError(502, 'O serviço não retornou uma transcrição válida.');
+      const originalText = text;
+      try {
+        const details = {};
+        const processedText = processMedicalCommands(originalText, details, app.log);
+        if (typeof processedText !== 'string' || !processedText.trim()) throw new Error('Resultado inválido');
+        text = processedText;
+        medicalCommandCount = details.count || 0;
+      } catch {
+        app.log.error('[Eden Voice] Erro ao processar comandos; mantendo transcrição original');
+        text = originalText;
+      }
     } catch (error) {
       if (error.code === 'FST_REQ_FILE_TOO_LARGE') failure = httpError(413, 'O áudio excedeu o limite de 20 MB.');
       else if (['FST_FILES_LIMIT', 'FST_FIELDS_LIMIT', 'FST_PARTS_LIMIT', 'FST_INVALID_MULTIPART_CONTENT_TYPE'].includes(error.code)) failure = httpError(400, 'Envie somente um arquivo no campo audio.');
@@ -55,6 +67,6 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     }
     const statusCode = failure?.statusCode || 200;
     app.log.info({ event: 'transcription', durationMs: Math.round(performance.now() - started), bytes: size, success: !failure, statusCode });
-    return reply.code(statusCode).send(failure ? { success: false, error: failure.message } : { success: true, text });
+    return reply.code(statusCode).send(failure ? { success: false, error: failure.message } : { success: true, text, medicalCommandCount });
   });
 }
