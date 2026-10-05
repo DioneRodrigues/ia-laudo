@@ -1,6 +1,6 @@
 # Eden Voice Transcriber
 
-MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e substitui o conteúdo do editor Eden AI pela transcrição. Inclui expansão determinística no backend de comandos médicos. Sem banco, histórico, cadastro dinâmico de regras, login ou streaming.
+MVP de extensão Chrome Manifest V3 para `https://pacs.evacenter.com/*`. Grava um ditado, permite ouvi-lo, envia o áudio ao backend Fastify e substitui o conteúdo do editor Eden AI pela transcrição. Inclui expansão determinística no backend de comandos médicos, histórico local da extensão e painel administrativo protegido. Sem banco de dados, cadastro dinâmico de regras ou streaming.
 
 ## Arquitetura
 
@@ -9,12 +9,14 @@ Microfone → MediaRecorder no content script → Blob em memória
        → POST /transcribe (multipart, campo audio)
        → arquivo temporário → OpenAI com contexto médico e português → remoção em finally
        → commandProcessor no backend
-       → { success: true, text, medicalCommandCount, medicalCommands } → editor TipTap/ProseMirror
+       → { success: true, text, medicalCommandCount, medicalCommands, logId } → editor TipTap/ProseMirror
+       ├→ chrome.storage.local (até 100 registros locais)
+       └→ painel /admin (até 100 registros na memória do backend)
 ```
 
 A extensão usa JavaScript puro e não precisa de build. Os scripts compartilham um namespace no mundo isolado do content script. O `MutationObserver` espera pelo editor, mantém um único painel e detecta remoção/substituição do editor. Uma sondagem de 500 ms também detecta mudanças de URL sem mutação DOM.
 
-O `fetch` parte do content script; sua origem é a página PACS. O backend permite explicitamente essa origem. A extensão não precisa de service worker, `tabs`, `storage`, `scripting`, acesso a todos os sites ou chave de API. A única regra de injeção é o domínio do PACS no manifest. A permissão de microfone é solicitada pela página após o clique.
+O `fetch` parte do content script; sua origem é a página PACS. O backend permite explicitamente essa origem. A extensão usa a permissão `storage` somente para salvar localmente o histórico; não precisa de service worker, `tabs`, `scripting`, acesso a todos os sites ou chave de API. A única regra de injeção é o domínio do PACS no manifest. A permissão de microfone é solicitada pela página após o clique.
 
 `services/transcriptionService.js` usa o SDK oficial (`client.audio.transcriptions.create`) e o modelo configurável `gpt-transcribe`, recomendado pela [documentação oficial de transcrição de arquivos](https://developers.openai.com/api/docs/guides/speech-to-text), consultada em 02/10/2026. Para trocar o provedor, mantenha `transcribeAudio(filePath, { signal })` retornando uma string. No backend, os comandos médicos conhecidos são expandidos após a transcrição e antes da inserção.
 
@@ -28,6 +30,9 @@ extenssao-eden-ia/
 │   ├── manifest.json
 │   ├── content/
 │   │   ├── config.js
+│   │   ├── logConfig.js
+│   │   ├── patientContext.js
+│   │   ├── monitoring.js
 │   │   ├── content.js
 │   │   ├── recorder.js
 │   │   ├── edenEditor.js
@@ -35,6 +40,8 @@ extenssao-eden-ia/
 │   │   └── ui.js
 │   ├── assets/clinicadamama-logo.png
 │   ├── styles/content.css
+│   ├── storage/logStore.js
+│   ├── utils/logger.js
 │   └── icons/.gitkeep
 └── backend/
     ├── .env.example
@@ -85,9 +92,12 @@ OPENAI_TRANSCRIPTION_MODEL=gpt-transcribe
 TRANSCRIPTION_MEDICAL_CONTEXT_ENABLED=true
 OPENAI_TIMEOUT_MS=120000
 CORS_ORIGIN=https://pacs.evacenter.com
+ADMIN_PASSWORD=senha-forte-com-pelo-menos-12-caracteres
+ADMIN_SESSION_SECRET=segredo-aleatorio-com-pelo-menos-32-bytes
+ADMIN_COOKIE_SECURE=true
 ```
 
-`HOST=127.0.0.1` restringe o servidor à máquina do médico. O MVP não oferece autenticação e não deve ser exposto publicamente como está. `CORS_ORIGIN` aceita origens explícitas separadas por vírgula, sem barra final e sem caminhos. `*` e `null` são rejeitados. CORS não substitui autenticação: clientes locais como curl não dependem de CORS.
+`HOST=127.0.0.1` restringe o servidor à máquina do médico. Para abrir `/admin`, configure `ADMIN_PASSWORD` com pelo menos 12 caracteres e `ADMIN_SESSION_SECRET` com pelo menos 32 bytes aleatórios. O painel usa sessão em cookie HttpOnly e limita tentativas de login. Mantenha `ADMIN_COOKIE_SECURE=true` em produção HTTPS; em desenvolvimento HTTP local, use `false`. `CORS_ORIGIN` aceita origens explícitas separadas por vírgula, sem barra final e sem caminhos. `*` e `null` são rejeitados; requisições same-origin do painel também são aceitas.
 
 ## Iniciar o backend
 
@@ -235,7 +245,7 @@ Sem match, a transcrição segue exatamente como recebida. Se o processador falh
 
 ### Migração para regras no backend (extensão 0.3.0)
 
-Atualize uma vez a extensão em todos os computadores e recarregue as abas do PACS; em seguida publique o backend novo. Essa ordem evita que uma extensão antiga expanda novamente os nomes Chammas presentes nas frases já processadas pelo servidor. Enquanto o backend antigo estiver ativo, a extensão nova insere o texto recebido sem expansão. Depois dessa migração, alterações em comandos e aliases exigem apenas atualizar/reiniciar o backend. Não há banco, painel administrativo ou download de regras para a extensão.
+Atualize uma vez a extensão em todos os computadores e recarregue as abas do PACS; em seguida publique o backend novo. Essa ordem evita que uma extensão antiga expanda novamente os nomes Chammas presentes nas frases já processadas pelo servidor. Enquanto o backend antigo estiver ativo, a extensão nova insere o texto recebido sem expansão. Depois dessa migração, alterações em comandos e aliases exigem apenas atualizar/reiniciar o backend. As regras continuam somente no backend; o histórico administrativo é independente e não configura regras.
 
 ## Interface Clínica da Mama (0.4.0)
 
@@ -245,7 +255,7 @@ O painel é uma camada ancorada às dimensões do editor, com espaço mínimo re
 
 Durante a gravação há cronômetro, ponto pulsante e animação de atividade (decorativa; não representa nível de volume). `prefers-reduced-motion` desativa a animação. Ao fechar gravando, o áudio é finalizado e mantido para reprodução/transcrição ao reabrir. Ao fechar durante uma requisição, a operação é cancelada para impedir inserções tardias sobre uma edição manual. Fechar o painel não reativa a escuta nativa do Eden.
 
-Os detalhes dos comandos e a transcrição para recuperação ficam apenas na memória da aba até Novo ditado/recarregamento; não há histórico persistente. Publique o backend para receber `medicalCommands` e atualize a extensão para 0.4.0. Com um backend 0.3, o painel continua funcionando e mostra apenas a contagem disponível. Valide o tamanho/posicionamento no PACS real, especialmente contêineres com altura fixa.
+Na versão 0.4.0, os detalhes dos comandos e a transcrição para recuperação ficavam apenas na memória da aba. A versão 0.5.0 acrescenta histórico local persistente e envia registros ao painel administrativo, conforme a seção de monitoramento abaixo. Publique o backend compatível e atualize a extensão para 0.5.0. Valide o tamanho/posicionamento no PACS real, especialmente contêineres com altura fixa.
 
 ## Contexto médico da transcrição
 
@@ -281,6 +291,14 @@ Exemplos desejados para homologação, sem garantia de correção lexical autom�
 
 Compare os mesmos áudios com a flag ligada e desligada, verificando também se o contexto induz termos não falados. Os testes automatizados validam o contrato de envio; a qualidade do reconhecimento precisa ser avaliada com gravações reais da clínica.
 
+## Histórico local e monitoramento administrativo
+
+O botão **Histórico** mantém os registros no painel da extensão. O painel administrativo `/admin`, protegido pela senha configurada no backend, oferece também o histórico central para acompanhamento. Ambos mostram paciente/exame, data/hora, duração e status; os detalhes incluem transcrição original com comandos destacados, cada comando e replacement, texto final e eventual erro por etapa. Os destaques são criados como nós de texto/`mark`, sem interpretar conteúdo clínico como HTML.
+
+Os dados do paciente e exame são lidos de `#patient-info-minimize-tabs-section` e `[data-testid="study-reason-trigger"]` ao iniciar a gravação. O snapshot inicial fica associado ao ditado; no início da transcrição, a extensão relê os dados para detectar uma troca e registrar um aviso, mas não altera o snapshot. Se um seletor estiver ausente, o respectivo campo fica vazio e o fluxo continua.
+
+O histórico local fica em `chrome.storage.local` neste computador e persiste após reiniciar o backend. A chamada existente `/transcribe` recebe áudio e contexto paciente/exame e cria o registro central; após inserção, a extensão comunica status/erro ao mesmo backend por callback protegido por token. Para aparecer no admin, `API_BASE_URL` da extensão e o domínio onde `/admin` foi aberto precisam apontar para a mesma instância do backend. O painel atualiza a lista a cada 5 segundos. Não há analytics nem endpoint externo adicional. Cada histórico conserva até 100 registros e remove o mais antigo ao exceder o limite. O botão **Limpar histórico** pede confirmação; a limpeza local e a central são independentes. O limite local está em `extension/content/logConfig.js` (`MAX_LOG_ENTRIES`) e o central em `backend/src/services/transcriptionLogStore.js` (`MAX_LOG_ENTRIES`). A cópia central existe apenas na memória do backend e é apagada ao reiniciar o processo. O console mostra apenas a quantidade de caracteres; `DEBUG_FULL_TEXT` permanece `false` por padrão.
+
 ## Testes automatizados
 
 Dentro de `backend/`:
@@ -294,7 +312,7 @@ O primeiro comando inclui os testes unitários do processador: aliases, caixa, a
 
 Também inclui `transcriptionService.test.js`: vocabulário/contexto sem replacements, flag habilitada/desabilitada, modelo e timeout por ENV, português, preservação literal da resposta, erros sem retry, limpeza de streams e logs seguros. Um teste usa o SDK real com transporte HTTP simulado para verificar os campos multipart, sem acessar a OpenAI ou usar credenciais reais.
 
-O segundo comando usa o Google Chrome instalado (`channel: 'chrome'`), um microfone simulado e uma instância real de TipTap 3/ProseMirror. Não chama a OpenAI nem precisa de `.env`. Verifica o estado interno do editor, os métodos de inserção, substituição do texto, fechamento/reabertura do painel, detalhes dos comandos, movimento reduzido, tracks encerradas, reprodução, multipart, CORS e bloqueio por mudança de rota. O teste do backend verifica também erros do provedor, entradas inválidas, limite de tamanho e limpeza em sucesso/erro.
+O segundo comando usa o Google Chrome instalado (`channel: 'chrome'`), um microfone simulado e uma instância real de TipTap 3/ProseMirror. Não chama a OpenAI nem precisa de `.env`. Verifica captura de paciente/exame, snapshot após troca de exame, histórico local até 100 registros, painel administrativo protegido com histórico central, destaques seguros contra HTML e log de falha na inserção.
 
 Isso não substitui testar o Eden real: a versão e os plugins do editor do PACS podem diferir da fixture. Os testes de navegador carregam os mesmos scripts em uma página local; não automatizam a instalação da extensão nem as permissões do PACS.
 
@@ -302,7 +320,7 @@ Isso não substitui testar o Eden real: a versão e os plugins do editor do PACS
 
 | Arquivo | Configuração |
 | --- | --- |
-| `backend/.env` | Chave, modelo, porta, timeout, host e origens CORS. Crie a partir de `.env.example`. |
+| `backend/.env` | Chave, modelo, contexto de transcrição, porta, timeout, host e origens CORS. Crie a partir de `.env.example`. |
 | `extension/content/config.js` | `API_BASE_URL`, timeouts, limite de áudio, escopo do editor, identificador do exame, seletores dos controles e `AUTO_SUBMIT`. |
 | `extension/manifest.json` | Domínio onde a extensão é injetada, caso o endereço do PACS mude. |
 | `extension/styles/content.css` | Cores, tipografia, estados e responsividade do painel ancorado ao editor. |
@@ -357,4 +375,4 @@ O ditado fica vinculado à URL e ao elemento editor desde o início da gravaçã
 
 O backend cria um diretório temporário por requisição dentro de `uploads/`, salva um único arquivo e remove o diretório em `finally` antes de responder, inclusive em erro do provedor ou multipart. Falha de exclusão gera erro explícito; verifique `uploads/` nesse caso. Encerrar o processo à força ou desligar a máquina não executa `finally`: após um crash, remova eventuais resíduos antes de retomar o uso.
 
-Na extensão, áudio e transcrição ficam somente na memória. Ao descartar, concluir a transcrição ou sair da página, os recursos de áudio são liberados; o texto de recuperação é eliminado ao iniciar um novo ditado. Não há armazenamento local nem histórico. O envio à OpenAI é necessário para a transcrição; a exclusão local não controla a retenção do provedor.
+O histórico da extensão guarda localmente paciente/exame, transcrição original, replacements médicos e texto final em `chrome.storage.local`. A cópia central fica temporariamente na memória do backend e só é acessível após login em `/admin`. Esses dados não são enviados a analytics ou endpoints de terceiros; os metadados seguem junto do áudio na chamada existente `/transcribe` e o status final usa callback do mesmo backend. O backend apaga o áudio temporário após transcrever. O envio à OpenAI é necessário para transcrição; a retenção do provedor segue as condições da conta/API e não é controlada pela limpeza dos históricos.

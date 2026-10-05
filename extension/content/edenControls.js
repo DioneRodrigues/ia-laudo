@@ -49,7 +49,7 @@
       while (performance.now() < deadline) {
         if (!button.isConnected) return; // A vigilância examina o novo controle.
         if (paused(button)) {
-          console.info('[Eden Voice] Escuta nativa do Eden pausada');
+          EV.Logger?.info('Escuta nativa do Eden pausada');
           return;
         }
         await delay();
@@ -71,7 +71,7 @@
       if (!active(button) || !enabled(button) || attempted.has(button)) return;
       attempted.add(button);
       void pauseNative(button).then(() => attempted.delete(button)).catch(() => {
-        console.error('[Eden Voice] Não foi possível pausar a escuta nativa do Eden');
+        EV.Logger?.error('Não foi possível pausar a escuta nativa do Eden');
       });
     };
     const observer = new MutationObserver(check);
@@ -138,7 +138,7 @@
       throw new Error('O botão ou o exame mudou antes do envio. Confira o texto no Eden.');
     }
     clickNative(button);
-    console.info('[Eden Voice] Comando Criar relatório enviado ao Eden');
+    EV.Logger?.info('Comando Criar relatório enviado ao Eden');
   };
   EV.bindEdenControls = ({ toggle, busy }) => {
     // Captura no window antes da delegação de eventos do React. SVGs internos

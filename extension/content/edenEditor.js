@@ -36,7 +36,7 @@
     if (typeof text !== 'string' || !text.trim()) throw new Error('A transcrição não contém texto.');
     if (!valid()) throw new Error('A página ou o editor mudou. Nenhum texto foi inserido.');
     const editor = context.editor;
-    console.info('[Eden Voice] Editor TipTap encontrado');
+    EV.Logger?.info('Editor TipTap encontrado');
     const before = plainText(editor);
     const addition = text;
     const comparable = (value) => value.replace(/\s+/g, ' ').trim();
@@ -82,7 +82,7 @@
     if (comparable(after) !== comparable(text)) {
       throw new Error('Não foi possível confirmar a inserção completa. Confira o editor; não tente inserir novamente sem revisar.');
     }
-    console.info(`[Eden Voice] Texto inserido; método: ${method}`);
+    EV.Logger?.info(`Texto inserido; método: ${method}`);
     return { method };
   };
 })();

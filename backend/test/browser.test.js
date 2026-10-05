@@ -25,6 +25,9 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
   let transcript = 'Texto transcrito de teste.';
   let commandFailure = false;
   const app = await buildApp({ logger: false, uploadsDir, corsOrigin: origin,
+    adminPassword: 'senha-administrativa-bem-forte',
+    adminSessionSecret: 'segredo-de-sessao-com-mais-de-32-bytes',
+    adminCookieSecure: false,
     processMedicalCommands: (...args) => {
       if (commandFailure) throw new Error('Falha simulada');
       return processMedicalCommands(...args);
@@ -42,7 +45,21 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.waitForFunction(() => window.testEditor);
     await script('config');
     await page.evaluate((api) => { EdenVoice.CONFIG = { ...EdenVoice.CONFIG, API_BASE_URL: api, AUTO_SUBMIT: false }; }, api);
-    await page.evaluate(() => { window.chrome = { ...window.chrome, runtime: { getURL: (path) => `${location.origin}/${path}` } }; });
+    await page.evaluate(() => {
+      const local = {};
+      window.chrome = {
+        runtime: { getURL: (path) => `${location.origin}/${path}` },
+        storage: { local: {
+          get: async (key) => ({ [key]: local[key] || [] }),
+          set: async (values) => Object.assign(local, values),
+        } },
+      };
+    });
+    await script('logConfig');
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/utils/logger.js', import.meta.url)) });
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/storage/logStore.js', import.meta.url)) });
+    await script('patientContext');
+    await script('monitoring');
     await script('edenEditor');
     if (controller) {
       for (const name of ['recorder', 'edenControls', 'ui', 'content']) await script(name);
@@ -79,6 +96,56 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.getByText('Comando enviado ao Eden', { exact: true }).waitFor();
     assert.deepEqual(await page.evaluate(() => [nativeClicks, submitClicks, submittedText]), [0, 1, 'Texto transcrito de teste.']);
     assert.equal(await page.evaluate(() => testEditor.getText()), '');
+    const adminLogin = await app.inject({ method: 'POST', url: '/admin/api/login', payload: { password: 'senha-administrativa-bem-forte' } });
+    const adminCookie = adminLogin.headers['set-cookie'].split(';')[0];
+    const adminLogs = (await app.inject({ method: 'GET', url: '/admin/api/logs', headers: { cookie: adminCookie } })).json().logs;
+    assert.equal(adminLogs.length, 1, 'transcrição precisa estar disponível no storage em memória do servidor');
+  });
+  await t.test('painel administrativo protegido mostra a transcrição centralizada', async () => {
+    const adminPage = await browser.newPage();
+    t.after(() => adminPage.close());
+    await adminPage.goto(`${api}/admin`);
+    await adminPage.locator('#password').fill('senha-administrativa-bem-forte');
+    await adminPage.getByRole('button', { name: 'Acessar painel' }).click();
+    await adminPage.locator('.log-item').first().waitFor();
+    await adminPage.waitForFunction(async () => {
+      const response = await fetch('/admin/api/logs', { cache: 'no-store' });
+      const { logs } = await response.json();
+      return logs.length > 0 && logs[0].status === 'success';
+    });
+    await adminPage.getByRole('button', { name: /Paciente não identificado/ }).first().click();
+    assert.equal(await adminPage.locator('.detail-panel').isVisible(), true);
+    assert.equal((await adminPage.locator('.detail-panel').innerText()).includes('Texto transcrito de teste.'), true);
+    assert.equal((await adminPage.locator('.memory-note').innerText()).includes('memória do servidor'), true);
+  });
+  await t.test('contexto do paciente/exame e storage local limitado a 100 logs', async () => {
+    await prepare();
+    const parsed = await page.evaluate(() => {
+      const block = document.createElement('section'); block.id = 'patient-info-minimize-tabs-section';
+      const name = document.createElement('p'); name.textContent = 'Dionismar Rodrigues,';
+      const info = document.createElement('p'); info.textContent = 'Masculino, 31 anos';
+      block.append(name, info); document.body.append(block);
+      const exam = document.createElement('div'); exam.dataset.testid = 'study-reason-trigger';
+      const title = document.createElement('p'); title.textContent = 'Densitometria Ossea 1 segmento'; exam.append(title); document.body.append(exam);
+      return EdenVoice.getPatientContext();
+    });
+    assert.deepEqual(parsed, { patientName: 'Dionismar Rodrigues', gender: 'Masculino', age: '31 anos', examName: 'Densitometria Ossea 1 segmento', patientInfoRaw: null });
+    assert.equal(await page.evaluate(() => EdenVoice.getPatientContext(document.createElement('div')).patientName), null);
+    assert.equal(await page.evaluate(() => EdenVoice.getPatientContext({ querySelector: () => null }).examName), null);
+    const raw = await page.evaluate(() => {
+      const block = document.querySelector('#patient-info-minimize-tabs-section p:nth-child(2)');
+      block.textContent = 'Informação não padronizada';
+      return EdenVoice.getPatientContext().patientInfoRaw;
+    });
+    assert.equal(raw, 'Informação não padronizada');
+    const saved = await page.evaluate(async () => {
+      for (let i = 0; i < 105; i++) await EdenVoice.LogStore.saveLog({ id: `log-${i}`, status: 'success' });
+      const logs = await EdenVoice.LogStore.getLogs();
+      return { length: logs.length, first: logs[0].id, last: logs.at(-1).id, byId: (await EdenVoice.LogStore.getLogById('log-104')).id };
+    });
+    assert.deepEqual(saved, { length: 100, first: 'log-104', last: 'log-5', byId: 'log-104' });
+    await page.evaluate(() => EdenVoice.LogStore.clearLogs());
+    assert.deepEqual(await page.evaluate(() => EdenVoice.LogStore.getLogs()), []);
   });
   await t.test('painel ocupa o editor, fecha para edição manual e reabre sem perder texto', async () => {
     await prepare(true);
@@ -179,6 +246,74 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
       } finally { transcript = 'Texto transcrito de teste.'; commandFailure = false; }
     });
   }
+  await t.test('registra transcrição original, texto final, múltiplos comandos e destaque seguro', async () => {
+    await prepare(true);
+    const original = 'Chammas 1. Chammas 5. <img src=x onerror=alert(1)>.';
+    transcript = original;
+    await page.evaluate(() => {
+      const block = document.createElement('section'); block.id = 'patient-info-minimize-tabs-section';
+      const name = document.createElement('p'); name.textContent = 'Dionismar Rodrigues';
+      const info = document.createElement('p'); info.textContent = 'Masculino, 31 anos'; block.append(name, info); document.body.append(block);
+      const exam = document.createElement('div'); exam.dataset.testid = 'study-reason-trigger'; exam.textContent = 'Densitometria Ossea 1 segmento'; document.body.append(exam);
+    });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'Finalizar' }).click();
+    await page.evaluate(() => {
+      document.querySelector('#patient-info-minimize-tabs-section p').textContent = 'Outro Paciente';
+      document.querySelector('[data-testid="study-reason-trigger"]').textContent = 'Outro exame';
+    });
+    await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
+    await page.getByText('Texto inserido no Eden', { exact: true }).waitFor();
+    const log = await page.evaluate(() => EdenVoice.LogStore.getLogs().then((logs) => logs[0]));
+    assert.equal(log.status, 'success');
+    assert.equal(log.patient.name, 'Dionismar Rodrigues');
+    assert.equal(log.patient.gender, 'Masculino');
+    assert.equal(log.patient.age, '31 anos');
+    assert.equal(log.exam.name, 'Densitometria Ossea 1 segmento');
+    assert.equal(log.transcription.originalText, original);
+    assert.equal(log.commands.length, 2);
+    assert.ok(log.finalText.includes('Chammas V'));
+    assert.equal(typeof log.timestamp, 'string');
+    await page.getByRole('button', { name: 'Histórico' }).click();
+    await page.getByRole('button', { name: /Dionismar Rodrigues/ }).click();
+    assert.equal(await page.locator('.ev-log-original-text mark').count(), 2);
+    assert.equal(await page.locator('.ev-log-original-text img').count(), 0);
+    assert.equal(await page.locator('.ev-log-original-text').innerText(), original.replace('Chammas 1', 'Chammas 1 → Tireoide - Chammas I').replace('Chammas 5', 'Chammas 5 → Tireoide - Chammas V'));
+    assert.ok((await page.locator('.ev-log-final-text').innerText()).includes('nódulo apenas com vascularização central'));
+    await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/history-detail.png', import.meta.url)) });
+  });
+  await t.test('falha na inserção salva transcrição e erro com stage eden-editor', async () => {
+    await prepare(true);
+    transcript = 'Texto transcrito mesmo com falha de inserção.';
+    await page.evaluate(() => { EdenVoice.insertTextIntoEden = async () => { throw new Error('Editor TipTap não encontrado'); }; });
+    await page.getByRole('button', { name: 'Iniciar gravação' }).click();
+    await page.getByRole('button', { name: 'Finalizar' }).waitFor();
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'Finalizar' }).click();
+    await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
+    await page.getByRole('alert').waitFor();
+    await page.waitForFunction(async () => (await EdenVoice.LogStore.getLogs()).length === 1);
+    const log = await page.evaluate(() => EdenVoice.LogStore.getLogs().then((logs) => logs[0]));
+    assert.equal(log.status, 'error');
+    assert.equal(log.error.stage, 'eden-editor');
+    assert.equal(log.transcription.originalText, transcript);
+    assert.equal(log.finalText, transcript);
+    transcript = 'Texto transcrito de teste.';
+  });
+  await t.test('logger aplica timestamp local e evita texto clínico integral por padrão', async () => {
+    await prepare();
+    await page.evaluate(() => {
+      window.capturedLogs = [];
+      for (const level of ['info', 'warn', 'error']) console[level] = (...args) => capturedLogs.push([level, ...args]);
+      EdenVoice.Logger.info('Transcrição recebida: 42 caracteres');
+      EdenVoice.Logger.text('Texto', 'paciente e conteúdo clínico privado');
+    });
+    const output = await page.evaluate(() => capturedLogs);
+    assert.match(output[0][1], /^\[\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}\] \[Eden Voice\]/);
+    assert.ok(!JSON.stringify(output).includes('conteúdo clínico privado'));
+  });
   await t.test('pausa nativa é confirmada antes de abrir o microfone', async () => {
     await prepare(true); await nativeControls({ active: true });
     await page.evaluate(() => {

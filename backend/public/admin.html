@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Eden Voice · Monitoramento administrativo</title>
+  <link rel="stylesheet" href="/admin/styles.css">
+  <script src="/admin/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/admin" aria-label="Eden Voice, início">
+      <img src="/admin/clinic-logo.png" alt="Clínica da Mama">
+      <span><strong>Eden Voice</strong><small>Monitoramento administrativo</small></span>
+    </a>
+    <div class="top-actions"><span class="privacy"><i></i> Ambiente privado</span><button id="logout" class="quiet-button" hidden>Sair</button></div>
+  </header>
+  <main class="shell">
+    <section id="login-view" class="login-card" hidden>
+      <div class="eyebrow">ACESSO RESTRITO</div>
+      <h1>Entrar no monitoramento</h1>
+      <p>Use a senha administrativa configurada no servidor.</p>
+      <form id="login-form">
+        <label for="password">Senha administrativa</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button class="primary-button" type="submit">Acessar painel</button>
+      </form>
+      <p id="login-error" class="error-message" role="alert" hidden></p>
+    </section>
+    <section id="unconfigured-view" class="login-card" hidden>
+      <div class="eyebrow">CONFIGURAÇÃO NECESSÁRIA</div>
+      <h1>Painel ainda não configurado</h1>
+      <p>Defina <code>ADMIN_PASSWORD</code> e <code>ADMIN_SESSION_SECRET</code> no ambiente do backend e reinicie o serviço.</p>
+    </section>
+    <section id="dashboard" hidden>
+      <div class="page-heading">
+        <div><div class="eyebrow">CLÍNICA DA MAMA · EDEN VOICE</div><h1>Transcrições</h1><p>Ditados recentes para homologação e acompanhamento.</p></div>
+        <div class="dashboard-actions"><span id="log-count" class="count-pill">0 registros</span><button id="refresh" class="quiet-button">Atualizar</button><button id="clear" class="quiet-button danger">Limpar histórico</button></div>
+      </div>
+      <p class="memory-note"><span aria-hidden="true">ⓘ</span> Histórico mantido temporariamente na memória do servidor. Reiniciar o backend apaga os registros.</p>
+      <div class="workspace">
+        <section class="list-panel" aria-label="Lista de transcrições"><div class="panel-heading"><h2>Recentes</h2><span id="last-update"></span></div><div id="log-list" class="log-list"></div></section>
+        <section id="detail-panel" class="detail-panel" aria-label="Detalhes da transcrição"><div class="placeholder"><span class="placeholder-mark">EV</span><h2>Selecione uma transcrição</h2><p>Os detalhes do ditado aparecerão aqui.</p></div></section>
+      </div>
+      <p id="dashboard-error" class="error-message" role="alert" hidden></p>
+    </section>
+  </main>
+</body>
+</html>

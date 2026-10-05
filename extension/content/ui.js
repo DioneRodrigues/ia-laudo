@@ -21,8 +21,10 @@
         <header class="ev-header">
           <img class="ev-logo" alt="Clínica da Mama" width="112" height="62">
           <div class="ev-brand"><strong>Assistente de ditado</strong><span>Exclusivo Clínica da Mama</span></div>
+          <button type="button" class="ev-history-open">Histórico</button>
           <button type="button" class="ev-close" aria-label="Fechar painel e acessar o editor Eden" title="Fechar e acessar o editor">${icon('close')}</button>
         </header>
+        <section class="ev-history-view" hidden aria-label="Histórico local de transcrições"><div class="ev-history-content"></div></section>
         <div class="ev-body">
           <div class="ev-session">
             <div class="ev-state-icon">${icon('mic')}</div>
@@ -47,7 +49,7 @@
     const logoURL = globalThis.chrome?.runtime?.getURL?.('assets/clinicadamama-logo.png');
     if (logoURL) get('.ev-logo').src = logoURL;
     else get('.ev-logo').hidden = true;
-    let editor, saved, closed = false, frame, reservedHeight = 380;
+    let editor, saved, closed = false, frame, historyMode = false, reservedHeight = 380;
     const resize = new ResizeObserver(() => schedulePosition());
     const restore = () => {
       resize.disconnect();
@@ -100,11 +102,12 @@
       position();
     };
     get('.ev-close').onclick = () => { void handlers.close(); };
+    get('.ev-history-open').onclick = handlers.history;
     get('.ev-reopen').onclick = () => setClosed(false);
     window.addEventListener('resize', schedulePosition);
     window.addEventListener('scroll', schedulePosition, true);
     document.body.append(root);
-    console.info('[Eden Voice] Interface criada');
+    EV.Logger?.info('Interface criada');
     return {
       root,
       attach(target) {
@@ -118,6 +121,27 @@
       },
       close: () => setClosed(true),
       open: () => { if (closed) setClosed(false); },
+      showHistory() {
+        historyMode = true;
+        reservedHeight = Math.min(Math.max(window.innerHeight - 24, 420), 760);
+        if (saved && editor) editor.style.minHeight = `${reservedHeight}px`;
+        get('.ev-body').hidden = true;
+        get('.ev-bottom').hidden = true;
+        get('.ev-history-view').hidden = false;
+        get('.ev-history-open').hidden = true;
+        schedulePosition();
+      },
+      hideHistory() {
+        historyMode = false;
+        reservedHeight = 480;
+        if (saved && editor) editor.style.minHeight = `${reservedHeight}px`;
+        get('.ev-body').hidden = false;
+        get('.ev-bottom').hidden = false;
+        get('.ev-history-view').hidden = true;
+        get('.ev-history-open').hidden = false;
+        schedulePosition();
+      },
+      historyContent: () => get('.ev-history-content'),
       suspend() { restore(); root.hidden = true; },
       time(seconds) {
         const hours = Math.floor(seconds / 3600);
@@ -125,6 +149,7 @@
           .map((n) => String(n).padStart(2, '0')).join(':');
       },
       render({ state, error = '', audioURL = '', text = '', medicalCommandCount = 0, medicalCommands = [] }) {
+        if (historyMode) return;
         // Dá espaço para ler a expansão sem ocultar as ações; listas longas ainda rolam.
         reservedHeight = medicalCommandCount > 0 || text ? 480 : 380;
         if (saved && editor.style.minHeight !== `${reservedHeight}px`) editor.style.minHeight = `${reservedHeight}px`;

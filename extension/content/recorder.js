@@ -1,6 +1,9 @@
 (() => {
   const EV = globalThis.EdenVoice;
-  const log = (message) => console.info(`[Eden Voice] ${message}`);
+  const log = (message) => {
+    if (EV.Logger) EV.Logger.info(message);
+    else console.info(`[Eden Voice] ${message}`);
+  };
   const microphoneError = (error) => new Error({
     NotAllowedError: 'Acesso ao microfone recusado. Libere o microfone nas permissões deste site.',
     NotFoundError: 'Nenhuma entrada de áudio encontrada. Conecte um microfone.',
@@ -60,7 +63,6 @@
             const blob = new Blob(chunks, { type: this.recorder.mimeType || chunks[0]?.type || 'audio/webm' });
             if (!blob.size) return reject(new Error('A gravação ficou vazia. Grave novamente.'));
             if (blob.size > EV.CONFIG.MAX_AUDIO_BYTES) return reject(new Error('Gravação excedeu 20 MB. Faça um ditado menor.'));
-            log('Gravação finalizada');
             log(`Blob criado: ${(blob.size / 1024 / 1024).toFixed(2)} MB`);
             resolve(blob);
           };
@@ -75,7 +77,6 @@
           }
         }));
         this.recorder.start(1000);
-        log('Gravação iniciada');
       } catch (error) { this.closeTracks(); throw microphoneError(error); }
     }
     stop() {
