@@ -57,8 +57,7 @@ export default async function adminRoutes(app, { store, password, sessionSecret,
   });
   app.get('/admin/clinic-logo.png', async (_request, reply) => {
     securityHeaders(reply);
-    const logoPath = fileURLToPath(new URL('../../../extension/assets/clinicadamama-logo.png', import.meta.url));
-    return reply.type('image/png').send(await readFile(logoPath));
+    return reply.type('image/png').send(await readFile(join(publicDir, 'clinic-logo.png')));
   });
 
   app.post('/admin/api/login', async (request, reply) => {

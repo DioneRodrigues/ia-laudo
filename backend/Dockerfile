@@ -11,6 +11,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 COPY src/ ./src/
+COPY public/ ./public/
 RUN mkdir -p uploads && chown node:node uploads && chmod 700 uploads
 
 USER node

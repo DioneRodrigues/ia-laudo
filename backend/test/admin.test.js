@@ -73,7 +73,14 @@ test('painel admin exige autenticação, autentica cookie seguro e serve logs pr
   t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
   const html = await app.inject({ method: 'GET', url: '/admin' });
   assert.equal(html.statusCode, 200);
+  assert.match(html.body, /Monitoramento/);
   assert.match(html.headers['content-security-policy'], /default-src 'self'/);
+  assert.equal((await app.inject({ method: 'GET', url: '/admin/styles.css' })).statusCode, 200);
+  assert.equal((await app.inject({ method: 'GET', url: '/admin/app.js' })).statusCode, 200);
+  const logo = await app.inject({ method: 'GET', url: '/admin/clinic-logo.png' });
+  assert.equal(logo.statusCode, 200);
+  assert.equal(logo.headers['content-type'], 'image/png');
+  assert.ok(logo.rawPayload.length > 0);
   assert.equal((await app.inject({ method: 'GET', url: '/admin/api/logs' })).statusCode, 401);
   assert.equal((await app.inject({ method: 'POST', url: '/admin/api/login', payload: { password: 'incorreta' } })).statusCode, 401);
   const login = await app.inject({ method: 'POST', url: '/admin/api/login', payload: { password: 'senha-administrativa-bem-forte' } });
