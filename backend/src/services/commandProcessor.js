@@ -352,7 +352,7 @@ const MEDICAL_COMMANDS = [
   {
     id: "transvaginal-mioma",
     label: "Transvaginal - Mioma uterino",
-    aliases: ["mioma", "mioma uterino"],
+    aliases: ["mioma uterino"],
     replacement:
       "Miométrio: Heterogêneo, observando˗se em parede @@@, nódulo sólido hipoecogênico, contornos regulares, medindo @@@ cm.",
   },
@@ -360,7 +360,7 @@ const MEDICAL_COMMANDS = [
   {
     id: "transvaginal-miomas",
     label: "Transvaginal - Miomas uterinos",
-    aliases: ["miomas", "miomas uterinos", "mioma uterinos"],
+    aliases: ["miomas uterinos", "mioma uterinos"],
     replacement:
       "Miométrio: Heterogêneo, observa˗se nódulos sólidos hipoecogênicos, contornos regulares, sendo:\n- Um em parede @, medindo @ cm.\n- Um em parede @, medindo @ cm.\n- Um em parede @, medindo @ cm.",
   },
@@ -784,16 +784,6 @@ export function createMedicalCommandProcessor(commands) {
     );
     return pieces.join("");
   };
-}
-
-export function getMedicalCommandCatalog() {
-  return MEDICAL_COMMANDS.map((command) => ({
-    id: command.id,
-    label: command.label || command.id,
-    category: command.label?.split(" - ", 1)[0] || "Geral",
-    aliases: [...command.aliases],
-    replacement: command.replacement,
-  }));
 }
 
 export const processMedicalCommands =
