@@ -113,7 +113,8 @@ for (const error of [
 
 test("rejeita transcrição vazia e preserva conteúdo válido sem expansão", async (t) => {
   const empty = await setup(t, {}, () => ({ text: "  " }));
-  await assert.rejects(empty.transcribe(empty.path), /Transcrição vazia/);
+  await assert.rejects(empty.transcribe(empty.path), (error) => error.message === "Transcrição vazia" && error.code === "TRANSCRIPTION_EMPTY");
+  assert.ok(empty.logs.includes("[Eden Voice API] O provedor retornou uma transcrição vazia"));
   const literal = "Nódulo sólido da tireoide. Chammas três. 1,2 cm à direita, sem fluxo.";
   const fixture = await setup(t, {}, () => ({ text: literal }));
   assert.equal(await fixture.transcribe(fixture.path), literal);

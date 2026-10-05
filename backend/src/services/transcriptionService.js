@@ -45,8 +45,10 @@ export function createTranscriptionService({
           ...(enabled && usesLanguages ? { keywords: [...ULTRASOUND_TERMS] } : {}),
         },
       });
-      if (typeof result.text !== "string" || !result.text.trim())
-        throw new Error("Transcrição vazia");
+      if (typeof result.text !== "string" || !result.text.trim()) {
+        logger.warn("[Eden Voice API] O provedor retornou uma transcrição vazia");
+        throw Object.assign(new Error("Transcrição vazia"), { code: "TRANSCRIPTION_EMPTY" });
+      }
       logger.info(`[Eden Voice API] Transcrição concluída em ${((performance.now() - started) / 1000).toFixed(1)}s`);
       return result.text;
     } catch (error) {
