@@ -8,6 +8,32 @@ const formats = new Map([
   ['audio/mp4', 'mp4'], ['audio/mpeg', 'mp3'], ['audio/wav', 'wav'], ['audio/x-wav', 'wav'],
 ]);
 const httpError = (statusCode, message) => Object.assign(new Error(message), { statusCode });
+const safeDiagnostic = (value) => typeof value === 'string' && /^[\w.-]{1,100}$/u.test(value) ? value : undefined;
+
+function getSafeProviderMessage(status) {
+  if (status === 400) return 'A API de transcrição rejeitou os parâmetros enviados. Verifique o modelo e o contexto médico.';
+  if (status === 401) return 'A autenticação da API de transcrição falhou. Verifique OPENAI_API_KEY no backend.';
+  if (status === 403) return 'A conta da API não tem acesso ao modelo de transcrição configurado.';
+  if (status === 404) return 'O modelo de transcrição configurado não foi encontrado ou não está disponível para a conta.';
+  if (status === 429) return 'A API de transcrição atingiu o limite de uso ou de requisições. Verifique quota e billing.';
+  if (status >= 500) return `A API de transcrição retornou erro temporário (HTTP ${status}). Tente novamente.`;
+  return `A API de transcrição recusou a solicitação (HTTP ${status}).`;
+}
+
+export function getTranscriptionFailureDiagnostics(error) {
+  const headers = error?.headers;
+  let requestId;
+  try { requestId = headers?.get?.('x-request-id') || error?._request_id || error?.request_id; } catch { /* sem diagnóstico de headers */ }
+  return Object.fromEntries(Object.entries({
+    errorName: safeDiagnostic(error?.name),
+    errorCode: safeDiagnostic(error?.code),
+    causeCode: safeDiagnostic(error?.cause?.code),
+    upstreamStatus: Number.isInteger(error?.status) ? error.status : undefined,
+    upstreamType: safeDiagnostic(error?.type),
+    upstreamParam: safeDiagnostic(error?.param),
+    upstreamRequestId: safeDiagnostic(requestId),
+  }).filter(([, value]) => value !== undefined));
+}
 
 export default async function transcribeRoutes(app, { uploadsDir, transcribeAudio, processMedicalCommands, logStore }) {
   app.post('/transcribe/:logId/status', async (request, reply) => {
@@ -82,10 +108,15 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
       });
     } catch (error) {
       if (transcriptionStartedAt !== null) transcriptionDurationMs = performance.now() - transcriptionStartedAt;
+      app.log.error({ event: 'transcription_upstream_failed', ...getTranscriptionFailureDiagnostics(error) },
+        'Falha na transcrição (detalhes sensíveis omitidos)');
       if (error.code === 'FST_REQ_FILE_TOO_LARGE') failure = httpError(413, 'O áudio excedeu o limite de 20 MB.');
       else if (['FST_FILES_LIMIT', 'FST_FIELDS_LIMIT', 'FST_PARTS_LIMIT', 'FST_INVALID_MULTIPART_CONTENT_TYPE'].includes(error.code)) failure = httpError(400, 'Envie somente um arquivo no campo audio.');
       else if (error.name === 'APIConnectionTimeoutError' || error.name === 'AbortError') failure = httpError(504, 'Tempo limite excedido ou requisição cancelada.');
       else if (error.statusCode && error.statusCode < 600) failure = error;
+      else if (Number.isInteger(error.status) && error.status >= 400 && error.status < 600) {
+        failure = httpError(error.status, getSafeProviderMessage(error.status));
+      }
       else failure = httpError(502, 'Não foi possível transcrever. Verifique a chave, o modelo e a disponibilidade do serviço no backend.');
     } finally {
       request.raw.off('aborted', abort);

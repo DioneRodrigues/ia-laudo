@@ -612,6 +612,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
   });
   for (const [label, response, expected] of [
     ['JSON inválido', { status: 200, contentType: 'text/html', body: '<html>erro</html>' }, 'Resposta HTTP inválida'],
+    ['gateway 502 sem JSON', { status: 502, contentType: 'text/html', body: '<html>Bad Gateway</html>' }, 'proxy respondeu HTTP 502'],
     ['texto ausente', { json: { success: true } }, 'sem text válido'],
     ['erro HTTP', { status: 503, json: { success: false, error: 'Serviço indisponível.' } }, 'Serviço indisponível'],
   ]) await t.test(`resposta do backend: ${label}`, async () => {

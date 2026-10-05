@@ -65,7 +65,12 @@
         const response = await fetchImpl(target.href, options);
         let data;
         try { data = await response.json(); }
-        catch { return { ok: false, status: response.status, error: `Resposta HTTP inválida do backend (${response.status}).` }; }
+        catch {
+          const error = response.status === 502
+            ? 'O proxy respondeu HTTP 502 (Bad Gateway) sem JSON. Verifique se o backend está ativo e se o proxy aponta para a porta 3001.'
+            : `Resposta HTTP inválida do backend (${response.status}).`;
+          return { ok: false, status: response.status, error };
+        }
         return { ok: response.ok, status: response.status, data,
           ...(!response.ok ? { error: typeof data?.error === 'string' ? data.error : `Falha HTTP ${response.status}.` } : {}) };
       } catch (error) {

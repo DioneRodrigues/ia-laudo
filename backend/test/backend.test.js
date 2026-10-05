@@ -4,6 +4,20 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildApp } from '../src/app.js';
+import { getTranscriptionFailureDiagnostics } from '../src/routes/transcribe.js';
+
+test('diagnóstico seguro de falha da transcrição omite mensagem e conteúdo clínico', () => {
+  const diagnostics = getTranscriptionFailureDiagnostics(Object.assign(new Error('texto clínico e chave secreta'), {
+    code: 'ECONNRESET', status: 502, type: 'api_error', param: 'prompt', request_id: 'req_123',
+    cause: { code: 'ENOTFOUND' },
+  }));
+  assert.deepEqual(diagnostics, {
+    errorName: 'Error', errorCode: 'ECONNRESET', causeCode: 'ENOTFOUND', upstreamStatus: 502,
+    upstreamType: 'api_error', upstreamParam: 'prompt', upstreamRequestId: 'req_123',
+  });
+  assert.ok(!JSON.stringify(diagnostics).includes('texto clínico'));
+  assert.ok(!JSON.stringify(diagnostics).includes('chave secreta'));
+});
 
 function upload({ name = 'audio', type = 'audio/webm', data = Buffer.from('test-audio'), extra = '' } = {}) {
   return {
@@ -93,6 +107,28 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
   await t.test('JSON não substitui multipart', async () => {
     assert.equal((await app.inject({ method: 'POST', url: '/transcribe', payload: { audio: 'x' } })).statusCode, 415);
   });
+});
+
+test('preserva status HTTP do SDK OpenAI em vez de mascarar erros como 502', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-provider-status-'));
+  let upstreamError;
+  const app = await buildApp({ logger: false, uploadsDir, transcribeAudio: async () => { throw upstreamError; } });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  for (const [status, expectedText] of [
+    [400, 'rejeitou os parâmetros'],
+    [401, 'OPENAI_API_KEY'],
+    [403, 'não tem acesso ao modelo'],
+    [404, 'não foi encontrado'],
+    [429, 'quota e billing'],
+    [502, 'erro temporário'],
+  ]) {
+    upstreamError = Object.assign(new Error('mensagem privada do provedor'), { status });
+    const response = await app.inject(upload());
+    assert.equal(response.statusCode, status);
+    assert.match(response.json().error, new RegExp(expectedText, 'iu'));
+    assert.ok(!response.body.includes('mensagem privada'));
+    assert.deepEqual(await readdir(uploadsDir), []);
+  }
 });
 
 test('falha nos comandos preserva transcrição e resposta de sucesso', async (t) => {
