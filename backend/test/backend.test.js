@@ -103,3 +103,21 @@ test('falha nos comandos preserva transcrição e resposta de sucesso', async (t
   assert.equal(response.json().medicalCommandCount, 0);
   assert.deepEqual(await readdir(uploadsDir), []);
 });
+
+test('catálogo de máscaras expõe aliases e replacements oficiais em modo somente leitura', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-mask-catalog-'));
+  const app = await buildApp({ logger: false, uploadsDir });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  const response = await app.inject({ method: 'GET', url: '/medical-commands', headers: { origin: 'https://pacs.evacenter.com' } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['cache-control'], 'no-store');
+  const { commands } = response.json();
+  assert.ok(commands.length > 0);
+  assert.ok(commands.some((command) => command.id === 'chammas-3'
+    && command.category === 'Tireoide'
+    && command.aliases.includes('chammas três')
+    && command.replacement.includes('Tipo III de Chammas')));
+  commands[0].aliases.push('alterado no cliente');
+  const fresh = (await app.inject({ method: 'GET', url: '/medical-commands' })).json().commands;
+  assert.ok(!fresh[0].aliases.includes('alterado no cliente'));
+});

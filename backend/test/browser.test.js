@@ -60,6 +60,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/storage/logStore.js', import.meta.url)) });
     await script('patientContext');
     await script('monitoring');
+    await script('medicalCommandCatalog');
     await script('edenEditor');
     if (controller) {
       for (const name of ['recorder', 'edenControls', 'ui', 'content']) await script(name);
@@ -117,6 +118,23 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(await adminPage.locator('.detail-panel').isVisible(), true);
     assert.equal((await adminPage.locator('.detail-panel').innerText()).includes('Texto transcrito de teste.'), true);
     assert.equal((await adminPage.locator('.memory-note').innerText()).includes('memória do servidor'), true);
+  });
+  await t.test('aba Máscaras consulta catálogo oficial, pesquisa aliases e mostra replacements sem edição', async () => {
+    await prepare(true);
+    await page.locator('#ev-tab-masks').click();
+    const catalog = page.locator('#ev-view-masks');
+    await catalog.getByRole('heading', { name: 'Máscaras médicas' }).waitFor();
+    await catalog.locator('.ev-mask-card').first().waitFor();
+    assert.ok(await catalog.locator('.ev-mask-card').count() > 10);
+    const search = catalog.getByRole('searchbox', { name: 'Buscar máscaras médicas' });
+    await search.fill('Chammas três');
+    const chammas = catalog.locator('.ev-mask-card');
+    assert.equal(await chammas.count(), 1);
+    await chammas.locator('summary').click();
+    assert.equal((await chammas.innerText()).includes('predomínio da vascularização periférica sobre a central'), true);
+    assert.equal(await catalog.getByRole('button', { name: /Editar|Salvar|Excluir/u }).count(), 0);
+    await search.fill('termo inexistente');
+    assert.equal(await catalog.getByText('Nenhuma máscara encontrada. Tente outro termo ou categoria.').isVisible(), true);
   });
   await t.test('contexto do paciente/exame e storage local limitado a 100 logs', async () => {
     await prepare();
@@ -276,7 +294,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(log.commands.length, 2);
     assert.ok(log.finalText.includes('Chammas V'));
     assert.equal(typeof log.timestamp, 'string');
-    await page.getByRole('button', { name: 'Histórico' }).click();
+    await page.getByRole('tab', { name: 'Histórico' }).click();
     await page.getByRole('button', { name: /Dionismar Rodrigues/ }).click();
     assert.equal(await page.locator('.ev-log-original-text mark').count(), 2);
     assert.equal(await page.locator('.ev-log-original-text img').count(), 0);

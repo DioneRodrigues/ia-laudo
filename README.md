@@ -10,6 +10,7 @@ Microfone → MediaRecorder no content script → Blob em memória
        → arquivo temporário → OpenAI com contexto médico e português → remoção em finally
        → commandProcessor no backend
        → { success: true, text, medicalCommandCount, medicalCommands, logId } → editor TipTap/ProseMirror
+       → GET /medical-commands → aba Máscaras (consulta somente leitura)
        ├→ chrome.storage.local (até 100 registros locais)
        └→ painel /admin (até 100 registros na memória do backend)
 ```
@@ -33,6 +34,7 @@ extenssao-eden-ia/
 │   │   ├── logConfig.js
 │   │   ├── patientContext.js
 │   │   ├── monitoring.js
+│   │   ├── medicalCommandCatalog.js
 │   │   ├── content.js
 │   │   ├── recorder.js
 │   │   ├── edenEditor.js
@@ -53,6 +55,7 @@ extenssao-eden-ia/
     │   ├── server.js
     │   ├── config/transcriptionVocabulary.js
     │   ├── config/transcriptionContext.js
+    │   ├── routes/medicalCommands.js
     │   ├── routes/transcribe.js
     │   ├── services/commandProcessor.js
     │   └── services/transcriptionService.js
@@ -298,6 +301,10 @@ O botão **Histórico** mantém os registros no painel da extensão. O painel ad
 Os dados do paciente e exame são lidos de `#patient-info-minimize-tabs-section` e `[data-testid="study-reason-trigger"]` ao iniciar a gravação. O snapshot inicial fica associado ao ditado; no início da transcrição, a extensão relê os dados para detectar uma troca e registrar um aviso, mas não altera o snapshot. Se um seletor estiver ausente, o respectivo campo fica vazio e o fluxo continua.
 
 O histórico local fica em `chrome.storage.local` neste computador e persiste após reiniciar o backend. A chamada existente `/transcribe` recebe áudio e contexto paciente/exame e cria o registro central; após inserção, a extensão comunica status/erro ao mesmo backend por callback protegido por token. Para aparecer no admin, `API_BASE_URL` da extensão e o domínio onde `/admin` foi aberto precisam apontar para a mesma instância do backend. O painel atualiza a lista a cada 5 segundos. Não há analytics nem endpoint externo adicional. Cada histórico conserva até 100 registros e remove o mais antigo ao exceder o limite. O botão **Limpar histórico** pede confirmação; a limpeza local e a central são independentes. O limite local está em `extension/content/logConfig.js` (`MAX_LOG_ENTRIES`) e o central em `backend/src/services/transcriptionLogStore.js` (`MAX_LOG_ENTRIES`). A cópia central existe apenas na memória do backend e é apagada ao reiniciar o processo. O console mostra apenas a quantidade de caracteres; `DEBUG_FULL_TEXT` permanece `false` por padrão.
+
+## Aba Máscaras
+
+A aba **Máscaras** da extensão consulta `GET /medical-commands`, que lê diretamente o catálogo `MEDICAL_COMMANDS` de `backend/src/services/commandProcessor.js`. O médico pode pesquisar por nome, alias ou trecho da frase e filtrar por categoria; ao abrir uma máscara, vê as expressões reconhecidas e o texto exato que será inserido. A tela é somente leitura: não altera nem cadastra regras. Como os dados vêm do backend, alterações no catálogo aparecem após o deploy/reinício do backend e a próxima consulta na extensão. A interface usa nós DOM e `textContent` para renderizar as regras com segurança.
 
 ## Testes automatizados
 

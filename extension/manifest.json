@@ -19,6 +19,7 @@
         "content/recorder.js",
         "content/edenEditor.js",
         "content/edenControls.js",
+        "content/medicalCommandCatalog.js",
         "content/ui.js",
         "content/content.js"
       ],

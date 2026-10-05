@@ -8,6 +8,7 @@ import { transcribeAudio } from './services/transcriptionService.js';
 import { processMedicalCommands } from './services/commandProcessor.js';
 import { createTranscriptionLogStore } from './services/transcriptionLogStore.js';
 import adminRoutes from './routes/admin.js';
+import medicalCommandRoutes from './routes/medicalCommands.js';
 
 export async function buildApp(options = {}) {
   const app = Fastify({ logger: options.logger ?? true, logController: new LogController({ disableRequestLogging: true }), requestTimeout: 180000, bodyLimit: 21 * 1024 * 1024 });
@@ -33,6 +34,7 @@ export async function buildApp(options = {}) {
   await mkdir(uploadsDir, { recursive: true, mode: 0o700 });
   app.get('/health', async () => ({ success: true }));
   const transcriptionLogStore = options.transcriptionLogStore || createTranscriptionLogStore();
+  await app.register(medicalCommandRoutes);
   await app.register(transcribeRoutes, { uploadsDir, transcribeAudio: options.transcribeAudio || transcribeAudio,
     processMedicalCommands: options.processMedicalCommands || processMedicalCommands, logStore: transcriptionLogStore });
   await app.register(adminRoutes, {

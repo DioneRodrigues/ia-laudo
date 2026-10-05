@@ -786,5 +786,15 @@ export function createMedicalCommandProcessor(commands) {
   };
 }
 
+export function getMedicalCommandCatalog() {
+  return MEDICAL_COMMANDS.map((command) => ({
+    id: command.id,
+    label: command.label || command.id,
+    category: command.label?.split(" - ", 1)[0] || "Geral",
+    aliases: [...command.aliases],
+    replacement: command.replacement,
+  }));
+}
+
 export const processMedicalCommands =
   createMedicalCommandProcessor(MEDICAL_COMMANDS);

@@ -282,6 +282,34 @@
       EV.Monitoring.render(ui.historyContent(), [], null, { onBack: () => ui?.hideHistory(), onClear() {}, onSelect() {} });
     }
   };
+  const showMedicalCommands = async () => {
+    ui?.showCommands();
+    const target = ui?.commandsContent();
+    if (!target || !EV.MedicalCommandCatalog) return;
+    const render = (options) => EV.MedicalCommandCatalog.render(target, options);
+    render({ loading: true });
+    try {
+      const response = await fetch(`${EV.CONFIG.API_BASE_URL.replace(/\/$/, '')}/medical-commands`, {
+        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'error',
+      });
+      let data;
+      try { data = await response.json(); }
+      catch { throw new Error(`Resposta inválida do catálogo (${response.status}).`); }
+      if (!response.ok || data?.success !== true || !Array.isArray(data.commands)) {
+        throw new Error(typeof data?.error === 'string' ? data.error : `Não foi possível carregar as máscaras (HTTP ${response.status}).`);
+      }
+      const commands = data.commands.filter((command) => command
+        && typeof command.id === 'string' && typeof command.label === 'string'
+        && typeof command.category === 'string' && Array.isArray(command.aliases)
+        && command.aliases.every((alias) => typeof alias === 'string')
+        && typeof command.replacement === 'string');
+      render({ commands, onRetry: showMedicalCommands });
+    } catch (failure) {
+      render({ error: failure instanceof TypeError
+        ? 'Não foi possível acessar o catálogo. Verifique a conexão com o backend.'
+        : failure.message, onRetry: showMedicalCommands });
+    }
+  };
   const invalidate = () => {
     const stage = currentRecording?.currentStage || 'recording';
     recordFailure(stage, new Error('A página ou o editor mudou durante a operação.'));
@@ -311,7 +339,7 @@
     try { editor = EV.findEdenEditor(); } catch { ui?.attach(null); return; }
     if (!ui) {
       if (!document.body || document.getElementById('eden-voice-transcriber-root')) return;
-      ui = EV.createUI({ start, stop: () => stop(), transcribe, reset, close: closePanel, history: showHistory }); draw();
+      ui = EV.createUI({ start, stop: () => stop(), transcribe, reset, close: closePanel, history: showHistory, commands: showMedicalCommands }); draw();
     }
     ui.attach(editor);
   };
