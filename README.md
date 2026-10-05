@@ -145,7 +145,7 @@ No EasyPanel, crie um serviço **App** com origem no repositório ou upload:
    ```
 
 4. Configure o domínio HTTPS com porta interna **3001** e faça o deploy. Mantenha o comando padrão da imagem; não substitua por `npm start`, que carrega um `.env` local.
-5. Verifique `https://seu-dominio/health` e altere `API_BASE_URL` em `extension/content/config.js` para esse domínio HTTPS. Recarregue a extensão e a aba do PACS.
+5. Verifique `/health` e ajuste `API_BASE_URL` em `extension/content/config.js` para o endereço do backend. As chamadas da extensão agora passam pelo service worker; o host também precisa constar em `host_permissions` de `extension/manifest.json`. O manifest inclui os esquemas HTTP e HTTPS para o IP `10.33.0.7`. Recarregue a extensão e a aba do PACS após alterações.
 
 Não é necessário volume persistente: `/app/uploads` recebe apenas arquivos temporários. O Build Path define também o contexto Docker, conforme a [documentação do EasyPanel](https://easypanel.io/docs/builders).
 
@@ -370,9 +370,9 @@ O ditado fica vinculado à URL e ao elemento editor desde o início da gravaçã
 
 **Backend indisponível:** acesse `/health`, confirme a porta e o terminal. Se `localhost` resolver incorretamente na sua máquina, ajuste `API_BASE_URL` para `http://127.0.0.1:3001`.
 
-**CORS:** o valor padrão correto é `https://pacs.evacenter.com`, sem `/*` nem barra final. Neste fluxo, a origem não é `chrome-extension://...`. Reinicie o backend após alterar `.env`. A requisição usa `FormData` sem definir `Content-Type` manualmente, para preservar o boundary multipart. Consulte a [documentação de requisições de extensões do Chrome](https://developer.chrome.com/docs/extensions/develop/concepts/network-requests).
+**Conexão da extensão com o backend:** as chamadas a `/transcribe`, `/medical-commands` e ao callback de status passam pelo service worker da extensão, que tem permissão explícita para o host. Isso evita que o `fetch` do content script fique sujeito à origem da página HTTPS e ao bloqueio de mixed content. O backend também reconhece origens `chrome-extension://` válidas, sem abrir CORS com `*`. Configure `CORS_ORIGIN` com a origem da página Eden/PACS, por exemplo `https://pacs.evacenter.com`, para os acessos web habituais. O navegador pode pedir nova autorização de host ao recarregar/instalar a extensão.
 
-**Acesso à rede local / mixed content / política do PACS:** dependendo da versão e das políticas do Chrome, pode ser necessário permitir acesso à rede local nas permissões do site para acessar localhost a partir do PACS em HTTPS. A resposta de preflight inclui suporte à rede privada apenas para origens autorizadas. Se a política corporativa ou a página impedir o acesso, CORS sozinho não resolve: use um backend HTTPS permitido e altere `API_BASE_URL`. Não desative globalmente a segurança do navegador.
+**Alteração do IP/host do backend:** quando mudar `API_BASE_URL`, inclua o mesmo host em `host_permissions` de `extension/manifest.json` (permissões HTTP e/ou HTTPS conforme o endereço usado), publique também o backend atualizado e recarregue a extensão e a aba do PACS. Para um IP privado, o computador precisa estar na rede local ou VPN que alcança esse IP, e o Chrome pode solicitar permissão de acesso à rede local. HTTP permite a conexão a partir da extensão, mas não criptografa o tráfego; HTTPS com certificado válido continua sendo a opção adequada para proteger áudio e dados clínicos em trânsito.
 
 **Erro do provedor:** confira chave, saldo, acesso ao modelo e conectividade do backend com a OpenAI. Mensagens brutas do SDK são omitidas para evitar vazamentos. O modelo é configurável no `.env`.
 

@@ -15,20 +15,21 @@ export async function buildApp(options = {}) {
   const origins = (options.corsOrigin ?? process.env.CORS_ORIGIN ?? 'https://pacs.evacenter.com')
     .split(',').map((value) => value.trim()).filter(Boolean);
   if (!origins.length || origins.includes('*') || origins.includes('null')) throw new Error('CORS_ORIGIN deve conter origens explícitas.');
+  const isExtensionOrigin = (origin) => /^chrome-extension:\/\/[a-p]{32}$/u.test(origin || '');
   app.addHook('onRequest', async (request, reply) => {
     const origin = request.headers.origin;
     let sameOrigin = false;
     if (origin) {
       try { sameOrigin = new URL(origin).host === request.headers.host; } catch { sameOrigin = false; }
     }
-    if (origin && !origins.includes(origin) && !sameOrigin) return reply.code(403).send({ success: false, error: 'Origem não autorizada pelo CORS_ORIGIN.' });
+    if (origin && !origins.includes(origin) && !sameOrigin && !isExtensionOrigin(origin)) return reply.code(403).send({ success: false, error: 'Origem não autorizada pelo CORS_ORIGIN.' });
     reply.header('Cache-Control', 'no-store');
     // Compatibilidade com versões do Chrome que usam preflight de rede privada.
-    if (origin && origins.includes(origin) && request.headers['access-control-request-private-network'] === 'true') {
+    if (origin && (origins.includes(origin) || isExtensionOrigin(origin)) && request.headers['access-control-request-private-network'] === 'true') {
       reply.header('Access-Control-Allow-Private-Network', 'true');
     }
   });
-  await app.register(cors, { origin: origins, methods: ['POST', 'GET', 'OPTIONS'], allowedHeaders: ['Content-Type'], credentials: false });
+  await app.register(cors, { origin: (origin, callback) => callback(null, origins.includes(origin) || isExtensionOrigin(origin)), methods: ['POST', 'GET', 'OPTIONS'], allowedHeaders: ['Content-Type'], credentials: false });
   await app.register(multipart, { limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 4, parts: 5 } });
   const uploadsDir = options.uploadsDir || fileURLToPath(new URL('../uploads/', import.meta.url));
   await mkdir(uploadsDir, { recursive: true, mode: 0o700 });

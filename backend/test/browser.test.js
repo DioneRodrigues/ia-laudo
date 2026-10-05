@@ -45,10 +45,14 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.waitForFunction(() => window.testEditor);
     await script('config');
     await page.evaluate((api) => { EdenVoice.CONFIG = { ...EdenVoice.CONFIG, API_BASE_URL: api, AUTO_SUBMIT: false }; }, api);
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/background/apiBridge.js', import.meta.url)) });
     await page.evaluate(() => {
       const local = {};
+      const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
+      window.testApiBridge = EdenVoiceApiBridge.createHandler({ apiBaseUrl: EdenVoice.CONFIG.API_BASE_URL,
+        extensionId, fetchImpl: window.fetch.bind(window) });
       window.chrome = {
-        runtime: { getURL: (path) => `${location.origin}/${path}` },
+        runtime: { getURL: (path) => `${location.origin}/${path}`, sendMessage: (message) => window.testApiBridge.handle(message, { id: extensionId }) },
         storage: { local: {
           get: async (key) => ({ [key]: local[key] || [] }),
           set: async (values) => Object.assign(local, values),
@@ -61,6 +65,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await script('patientContext');
     await script('monitoring');
     await script('medicalCommandCatalog');
+    await script('apiClient');
     await script('edenEditor');
     if (controller) {
       for (const name of ['recorder', 'edenControls', 'ui', 'content']) await script(name);

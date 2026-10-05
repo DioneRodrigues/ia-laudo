@@ -66,11 +66,8 @@
     if (!remoteLogId || !remoteCompletionToken) return;
     const logId = remoteLogId, completionToken = remoteCompletionToken;
     try {
-      const response = await fetch(`${EV.CONFIG.API_BASE_URL.replace(/\/$/, '')}/transcribe/${encodeURIComponent(logId)}/status`, {
-        method: 'POST', credentials: 'omit', redirect: 'error', keepalive: true,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, completionToken, ...(failure ? { error: failure } : {}) }),
-      });
+      const response = await EV.ApiClient.request({ path: `/transcribe/${encodeURIComponent(logId)}/status`, method: 'POST',
+        json: { status, completionToken, ...(failure ? { error: failure } : {}) } });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       if (remoteLogId === logId) { remoteLogId = null; remoteCompletionToken = null; }
     } catch (storageFailure) {
@@ -187,19 +184,17 @@
       const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav', 'audio/mpeg': 'mp3' };
       const extension = extensions[blob.type.split(';')[0]];
       if (!extension) throw new Error('Formato de gravação não suportado pelo backend. Use o Chrome atualizado.');
-      const body = new FormData(); body.append('audio', blob, `laudo.${extension}`);
-      body.append('patientContext', JSON.stringify(currentRecording?.recordingContext || {}));
-      body.append('audioDurationSeconds', String(currentRecording?.audio.durationSeconds || 0));
-      body.append('recordingStartedAt', currentRecording?.recordingStartedAt || '');
-      body.append('recordingFinishedAt', currentRecording?.recordingFinishedAt || '');
+      const fields = {
+        patientContext: JSON.stringify(currentRecording?.recordingContext || {}),
+        audioDurationSeconds: String(currentRecording?.audio.durationSeconds || 0),
+        recordingStartedAt: currentRecording?.recordingStartedAt || '',
+        recordingFinishedAt: currentRecording?.recordingFinishedAt || '',
+      };
       logger.info('Enviando áudio para transcrição');
-      const response = await fetch(`${EV.CONFIG.API_BASE_URL.replace(/\/$/, '')}/transcribe`, {
-        method: 'POST', body, signal: requestController.signal, credentials: 'omit', redirect: 'error',
-      });
-      let data;
-      try { data = await response.json(); }
-      catch { throw new Error(`Resposta HTTP inválida do backend (${response.status}).`); }
-      if (!response.ok || data?.success !== true) throw new Error(typeof data?.error === 'string' ? data.error : `Falha HTTP ${response.status} na transcrição.`);
+      const response = await EV.ApiClient.request({ path: '/transcribe', method: 'POST', audio: blob, fields }, { signal: requestController.signal });
+      const data = response.data;
+      if (!response.ok) throw new Error(response.error || `Falha HTTP ${response.status} na transcrição.`);
+      if (data?.success !== true) throw new Error(typeof data?.error === 'string' ? data.error : `Falha HTTP ${response.status} na transcrição.`);
       if (typeof data.text !== 'string' || !data.text.trim()) throw new Error('Resposta do backend sem text válido.');
       if (operation !== epoch) return;
       remoteLogId = typeof data.logId === 'string' ? data.logId : null;
@@ -257,7 +252,8 @@
       if (operation !== epoch) return;
       recordFailure(stage, failure);
       const message = timedOut ? 'Tempo limite de transcrição excedido. Tente novamente.'
-        : failure instanceof TypeError ? 'Backend indisponível ou acesso bloqueado. Verifique o servidor, CORS e a permissão de rede local.' : failure.message;
+        : failure instanceof TypeError ? 'A extensão não conseguiu acessar o backend. Confirme o IP em API_BASE_URL, a permissão do host no manifest e o acesso à rede/VPN.'
+          : failure.message;
       void reportRemoteStatus('error', { stage, message });
       fail(message, text ? 'recovery' : blob ? 'ready' : 'error');
     } finally { clearTimeout(timeout); if (controller === requestController) controller = null; }
@@ -289,13 +285,10 @@
     const render = (options) => EV.MedicalCommandCatalog.render(target, options);
     render({ loading: true });
     try {
-      const response = await fetch(`${EV.CONFIG.API_BASE_URL.replace(/\/$/, '')}/medical-commands`, {
-        method: 'GET', credentials: 'omit', cache: 'no-store', redirect: 'error',
-      });
-      let data;
-      try { data = await response.json(); }
-      catch { throw new Error(`Resposta inválida do catálogo (${response.status}).`); }
-      if (!response.ok || data?.success !== true || !Array.isArray(data.commands)) {
+      const response = await EV.ApiClient.request({ path: '/medical-commands', method: 'GET' });
+      const data = response.data;
+      if (!response.ok) throw new Error(response.error || `Não foi possível carregar as máscaras (HTTP ${response.status}).`);
+      if (data?.success !== true || !Array.isArray(data.commands)) {
         throw new Error(typeof data?.error === 'string' ? data.error : `Não foi possível carregar as máscaras (HTTP ${response.status}).`);
       }
       const commands = data.commands.filter((command) => command

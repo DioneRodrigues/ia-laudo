@@ -75,6 +75,14 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
     assert.equal((await app.inject(request)).statusCode, 403);
     assert.deepEqual(await readdir(uploadsDir), []);
   });
+  await t.test('requisição originada por extensão Chrome autorizada', async () => {
+    const request = { method: 'GET', url: '/medical-commands', headers: { origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' } };
+    assert.equal((await app.inject(request)).statusCode, 200);
+  });
+  await t.test('origem que imita extensão, mas tem ID inválido, é rejeitada', async () => {
+    const request = { method: 'GET', url: '/medical-commands', headers: { origin: 'chrome-extension://not-a-valid-id' } };
+    assert.equal((await app.inject(request)).statusCode, 403);
+  });
   await t.test('preflight restrito para rede privada', async () => {
     const response = await app.inject({ method: 'OPTIONS', url: '/transcribe', headers: {
       origin: 'https://pacs.evacenter.com', 'access-control-request-method': 'POST', 'access-control-request-private-network': 'true',

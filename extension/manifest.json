@@ -1,9 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Eden Voice Transcriber",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Grava um ditado, transcreve e insere o texto no Eden AI.",
   "permissions": ["storage"],
+  "host_permissions": [
+    "http://10.33.0.7/*",
+    "https://10.33.0.7/*"
+  ],
+  "background": {
+    "service_worker": "background/serviceWorker.js"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -20,6 +27,7 @@
         "content/edenEditor.js",
         "content/edenControls.js",
         "content/medicalCommandCatalog.js",
+        "content/apiClient.js",
         "content/ui.js",
         "content/content.js"
       ],
