@@ -15,8 +15,30 @@
     constructor(onUnexpectedStop) {
       this.onUnexpectedStop = onUnexpectedStop;
       this.generation = 0;
+      this.activeSince = null;
+      this.recordedMs = 0;
+    }
+    durationSeconds() {
+      return (this.recordedMs + (this.activeSince === null ? 0 : performance.now() - this.activeSince)) / 1000;
+    }
+    freezeDuration() {
+      if (this.activeSince !== null) this.recordedMs += performance.now() - this.activeSince;
+      this.activeSince = null;
+    }
+    pause() {
+      if (this.recorder?.state !== 'recording') return;
+      this.recorder.pause();
+      this.freezeDuration();
+      log('Gravação pausada');
+    }
+    resume() {
+      if (this.recorder?.state !== 'paused') return;
+      this.recorder.resume();
+      this.activeSince = performance.now();
+      log('Gravação retomada');
     }
     closeTracks() {
+      this.freezeDuration();
       if (this.stream) {
         this.stream.getTracks().forEach((track) => track.stop());
         this.stream = null;
@@ -70,13 +92,15 @@
         // Pode haver cancelamento antes de o controlador aguardar stop().
         this.finished.catch(() => {});
         stream.getAudioTracks().forEach((track) => track.addEventListener('ended', () => {
-          if (this.recorder.state === 'recording') {
+          if (['recording', 'paused'].includes(this.recorder.state)) {
             failure = new Error('O microfone foi desconectado. Grave novamente.');
             this.stop();
             this.onUnexpectedStop(failure);
           }
         }));
         this.recorder.start(1000);
+        this.recordedMs = 0;
+        this.activeSince = performance.now();
       } catch (error) { this.closeTracks(); throw microphoneError(error); }
     }
     stop() {

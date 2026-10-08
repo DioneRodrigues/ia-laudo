@@ -38,6 +38,7 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
     const result = response.json();
     assert.deepEqual(Object.fromEntries(Object.entries(result).filter(([key]) => !['logId', 'completionToken'].includes(key))), {
       success: true, originalText: 'Texto de teste.', text: 'Texto de teste.', medicalCommandCount: 0, medicalCommands: [],
+      exam: { name: '', contextId: null, contextLabel: null, matchedAlias: null, resolution: 'unresolved' }, examResolution: { source: 'automatic' },
     });
     assert.match(result.logId, /^[0-9a-f-]{36}$/u);
     assert.equal(typeof result.completionToken, 'string');
@@ -48,7 +49,7 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
   });
   await t.test('expande comandos no backend e retorna a contagem', async () => {
     provider = async () => 'Chammas 1. Chammas 5.';
-    const response = await app.inject(upload());
+    const response = await app.inject(upload({ extra: '--eden-test\r\nContent-Disposition: form-data; name="patientContext"\r\n\r\n{"examName":"Tireoide"}\r\n' }));
     assert.equal(response.statusCode, 200);
     const result = response.json();
     assert.equal(result.originalText, 'Chammas 1. Chammas 5.');
@@ -164,4 +165,20 @@ test('catálogo de máscaras expõe aliases e replacements oficiais em modo some
   commands[0].aliases.push('alterado no cliente');
   const fresh = (await app.inject({ method: 'GET', url: '/medical-commands' })).json().commands;
   assert.ok(!fresh[0].aliases.includes('alterado no cliente'));
+});
+
+test('endpoint resolve o nome e mantém apenas comandos do exame, ignorando contextId informado', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-exam-flow-'));
+  const app = await buildApp({ logger: false, uploadsDir, transcribeAudio: async () => 'Cisto simples. Hemangioma. Chammas 3.' });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  for (const [examName, expected] of [['Mama', ['mama-cisto-simples']], ['Transvaginal', []], ['Abdome Total', ['abdome-hemangioma']], ['Tireoide', ['chammas-3']], ['US XYZ 123', []]]) {
+    const patient = JSON.stringify({ examName, contextId: 'mama' });
+    const response = await app.inject(upload({ extra: `--eden-test\r\nContent-Disposition: form-data; name="patientContext"\r\n\r\n${patient}\r\n` }));
+    assert.equal(response.statusCode, 200);
+    const result = response.json();
+    assert.deepEqual(result.medicalCommands.map(({ id }) => id), expected);
+    assert.equal(result.exam.name, examName);
+    assert.equal(result.examResolution.source, 'automatic');
+    if (!expected.length) assert.equal(result.text, result.originalText);
+  }
 });

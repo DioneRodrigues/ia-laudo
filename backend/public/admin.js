@@ -63,6 +63,9 @@
     const metadata = node('div', 'detail-grid');
     const fields = [
       ['Sexo/idade', [log.patient?.gender, log.patient?.age].filter(Boolean).join(', ') || log.patient?.patientInfoRaw || '—'],
+      ['Contexto', log.exam?.contextLabel || '⚠ Não identificado'],
+      ['Resolução', log.exam?.resolution === 'manual' ? 'Manual' : 'Automática'],
+      ['Comandos', String(log.commands?.length || 0)],
       ['Áudio', duration(log.audio?.durationSeconds)],
       ['Tamanho', `${((log.audio?.sizeBytes || 0) / 1024 / 1024).toFixed(2)} MB`],
       ['Transcrição', `${((log.transcription?.durationMs || 0) / 1000).toFixed(1)}s`],
@@ -71,6 +74,7 @@
       const field = node('div', 'detail-field'); field.append(node('span', '', label), node('strong', '', value)); metadata.append(field);
     }
     panel.append(metadata);
+    if (!log.exam?.contextId) panel.append(node('p', 'error', '⚠ Exame não identificado. Comandos médicos específicos desabilitados.'));
     const original = node('p', 'clinical-text'); appendHighlighted(original, log.transcription?.originalText, log.commands);
     panel.append(section('Transcrição original', original));
     const commandList = node('ol', 'command-list');

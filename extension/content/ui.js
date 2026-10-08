@@ -3,6 +3,8 @@
   // Ícones vetoriais locais; os textos vindos do backend nunca entram em HTML.
   const paths = {
     mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
+    pause: '<path d="M9 5v14M15 5v14"/>',
+    resume: '<path d="m8 4 12 8-12 8Z"/>',
     stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     send: '<path d="m22 2-7 20-4-9-9-4 20-7ZM22 2 11 13"/>',
@@ -39,6 +41,7 @@
           <div class="ev-wave" aria-hidden="true">${Array.from({ length: 25 }, (_, i) => `<i style="--bar:${8 + ((i * 17) % 27)}px;--delay:${-(i % 7) * 0.13}s"></i>`).join('')}</div>
           <audio controls aria-label="Ouvir gravação" hidden></audio>
           <p class="ev-error" role="alert" hidden></p>
+          <p class="ev-exam-warning" role="status" hidden></p>
           <section class="ev-command-section" hidden aria-label="Comandos médicos expandidos">
             <div class="ev-command-heading">${icon('file')}<h3>Comandos médicos</h3><span class="ev-command-count"></span></div>
             <p class="ev-medical-commands" role="status"></p>
@@ -160,19 +163,25 @@
         get('.ev-timer').textContent = [...(hours ? [hours] : []), Math.floor(seconds / 60) % 60, seconds % 60]
           .map((n) => String(n).padStart(2, '0')).join(':');
       },
-      render({ state, error = '', audioURL = '', text = '', medicalCommandCount = 0, medicalCommands = [] }) {
+      render({ state, error = '', audioURL = '', text = '', medicalCommandCount = 0, medicalCommands = [], exam }) {
         if (activeView !== 'dictation') return;
         // Dá espaço para ler a expansão sem ocultar as ações; listas longas ainda rolam.
         reservedHeight = medicalCommandCount > 0 || text ? 480 : 380;
         if (saved && editor.style.minHeight !== `${reservedHeight}px`) editor.style.minHeight = `${reservedHeight}px`;
-        const titles = { idle: 'Pronto para gravar', requesting: 'Aguardando microfone…', recording: 'Gravando', stopping: 'Finalizando…', ready: 'Gravação concluída', transcribing: 'Transcrevendo… Aguarde', success: 'Texto inserido no Eden', recovery: 'Transcrição recebida', error: 'Não foi possível concluir', submitting: 'Texto inserido. Enviando ao Eden…', sent: 'Comando enviado ao Eden' };
-        const hints = { idle: 'Inicie o ditado e fale no seu ritmo.', requesting: 'Autorize o microfone para começar.', recording: 'Sua voz está sendo gravada pela extensão.', stopping: 'Preparando seu áudio.', ready: 'Ouça o áudio ou transcreva para continuar.', transcribing: 'Convertendo o áudio e expandindo os comandos médicos.', success: 'O campo Eden recebeu o novo ditado.', submitting: 'Aguardando o Eden receber o ditado.', sent: 'Confira o relatório gerado pelo Eden.', recovery: 'Confira o editor. O texto está disponível para cópia.', error: 'Confira a mensagem abaixo antes de tentar novamente.' };
+        const titles = { idle: 'Pronto para gravar', requesting: 'Aguardando microfone…', recording: 'Gravando', paused: 'Gravação pausada', stopping: 'Finalizando…', ready: 'Gravação concluída', transcribing: 'Transcrevendo… Aguarde', success: 'Texto inserido no Eden', recovery: 'Transcrição recebida', error: 'Não foi possível concluir', submitting: 'Texto inserido. Enviando ao Eden…', sent: 'Comando enviado ao Eden' };
+        const hints = { idle: 'Inicie o ditado e fale no seu ritmo.', requesting: 'Autorize o microfone para começar.', recording: 'Sua voz está sendo gravada pela extensão.', paused: 'A captura está pausada. Retome para continuar o mesmo ditado.', stopping: 'Preparando seu áudio.', ready: 'Ouça o áudio ou transcreva para continuar.', transcribing: 'Convertendo o áudio e expandindo os comandos médicos.', success: 'O campo Eden recebeu o novo ditado.', submitting: 'Aguardando o Eden receber o ditado.', sent: 'Confira o relatório gerado pelo Eden.', recovery: 'Confira o editor. O texto está disponível para cópia.', error: 'Confira a mensagem abaixo antes de tentar novamente.' };
         root.dataset.state = state;
         get('.ev-status').textContent = titles[state];
         get('.ev-hint').textContent = hints[state];
         get('.ev-state-icon').innerHTML = icon(['success', 'sent'].includes(state) ? 'check' : 'mic');
-        get('.ev-timer').hidden = !['idle', 'requesting', 'recording', 'stopping', 'ready'].includes(state);
+        get('.ev-timer').hidden = !['idle', 'requesting', 'recording', 'paused', 'stopping', 'ready'].includes(state);
         get('.ev-wave').hidden = state !== 'recording';
+        // TODO: seleção manual limitada à gravação exige transportar e validar o override
+        // no backend; nunca reutilizar a seleção entre ditados ou inferir pela fala.
+        const unknownExam = exam?.resolution && !exam.contextId;
+        get('.ev-exam-warning').hidden = !unknownExam;
+        get('.ev-exam-warning').textContent = unknownExam
+          ? `⚠ Exame não identificado. Nome: ${exam.name || 'não informado'}. Comandos médicos específicos não serão aplicados.` : '';
         get('.ev-command-section').hidden = medicalCommandCount === 0;
         get('.ev-command-count').textContent = String(medicalCommandCount);
         get('.ev-medical-commands').textContent = medicalCommandCount === 1 ? '1 comando médico aplicado' : `${medicalCommandCount} comandos médicos aplicados`;
@@ -198,7 +207,8 @@
         get('.ev-replace-note').hidden = !['idle', 'ready'].includes(state);
         const actions = get('.ev-actions'); actions.replaceChildren();
         const buttons = {
-          idle: [['Iniciar gravação', 'start', 'mic']], recording: [['Finalizar', 'stop', 'stop']],
+          idle: [['Iniciar gravação', 'start', 'mic']], recording: [['Finalizar', 'stop', 'stop'], ['Pausar captura', 'pause', 'pause']],
+          paused: [['Retomar captura', 'resume', 'resume'], ['Finalizar', 'stop', 'stop']],
           ready: [['Transcrever', 'transcribe', 'send'], ['Descartar', 'reset', 'trash']],
           success: [['Novo ditado', 'reset', 'mic']], sent: [['Novo ditado', 'reset', 'mic']],
           recovery: [['Novo ditado', 'reset', 'mic']], error: [['Tentar novo ditado', 'reset', 'mic']],

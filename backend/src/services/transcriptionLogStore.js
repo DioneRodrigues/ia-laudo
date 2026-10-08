@@ -37,7 +37,13 @@ export function createTranscriptionLogStore({ maxEntries = MAX_LOG_ENTRIES } = {
           age: safeString(patient?.age, 100),
           patientInfoRaw: safeString(patient?.patientInfoRaw, 500),
         },
-        exam: { name: safeString(exam?.name, 1000) },
+        exam: {
+          name: safeString(exam?.name, 1000),
+          contextId: safeString(exam?.contextId, 100),
+          contextLabel: safeString(exam?.contextLabel, 100),
+          matchedAlias: safeString(exam?.matchedAlias, 1000),
+          resolution: ['manual', 'unresolved'].includes(exam?.resolution) ? exam.resolution : 'automatic',
+        },
         audio: {
           durationSeconds: Number.isFinite(audio?.durationSeconds) ? Math.max(0, Math.min(audio.durationSeconds, 36000)) : 0,
           sizeBytes: Number.isSafeInteger(audio?.sizeBytes) ? Math.max(0, audio.sizeBytes) : 0,

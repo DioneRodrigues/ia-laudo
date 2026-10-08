@@ -1,9 +1,9 @@
+import { MEDICAL_COMMANDS } from '../src/services/commandProcessor.js';
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runInNewContext } from "node:vm";
 import OpenAI from "openai";
 import { createTranscriptionService } from "../src/services/transcriptionService.js";
 import { ULTRASOUND_TERMS } from "../src/config/transcriptionVocabulary.js";
@@ -38,12 +38,10 @@ test("contexto contém vocabulário técnico e comandos, sem replacements", asyn
   }
   assert.equal(new Set(ULTRASOUND_TERMS).size, ULTRASOUND_TERMS.length);
   assert.ok(ULTRASOUND_TERMS.every((term) => !/[<>\r\n]/u.test(term)));
-  const source = await readFile(new URL("../src/services/commandProcessor.js", import.meta.url), "utf8");
-  // Inspeciona o catálogo local sem exportá-lo nem modificar o processor.
-  const commands = runInNewContext(source.split("const escapeRegex")[0] + "\nMEDICAL_COMMANDS;");
+  const commands = MEDICAL_COMMANDS;
   assert.ok(commands.length > 0);
   for (const command of commands) assert.ok(!context.includes(command.replacement), command.id);
-  for (const instruction of ["Não resuma", "Não interprete clinicamente", "números", "medidas", "lateralidade", "negações", "sem expandir"]) {
+  for (const instruction of ["Não resuma", "Não interprete clinicamente", "números", "medidas", "lateralidade", "negações", "não os expanda"]) {
     assert.ok(context.includes(instruction), instruction);
   }
 });

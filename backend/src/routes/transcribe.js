@@ -1,3 +1,4 @@
+import { resolveExamMetadata } from '../config/examCatalog.js';
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -50,6 +51,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     let transcriptionStartedAt = null, transcriptionDurationMs = 0;
     let medicalCommandCount = 0;
     let medicalCommands = [];
+    let exam = resolveExamMetadata(null);
     const started = performance.now();
     const controller = new AbortController();
     const abort = () => { if (!reply.raw.writableEnded) controller.abort(); };
@@ -80,10 +82,11 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
         if (!size) throw httpError(400, 'O arquivo de áudio está vazio.');
       }
       if (!filePath) throw httpError(400, 'Arquivo audio não encontrado.');
+      exam = resolveExamMetadata(patientContext?.examName);
       transcriptionStartedAt = performance.now();
       ({ id: logId, token: completionToken } = logStore.begin({
         patient: patientContext,
-        exam: { name: patientContext?.examName },
+        exam,
         audio: { durationSeconds: audioDurationSeconds, sizeBytes: size },
         recordingStartedAt, recordingFinishedAt,
       }));
@@ -93,7 +96,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
       originalText = text;
       try {
         const details = {};
-        const processedText = processMedicalCommands(originalText, details, app.log);
+        const processedText = processMedicalCommands(originalText, details, app.log, { examName: patientContext?.examName });
         if (typeof processedText !== 'string' || !processedText.trim()) throw new Error('Resultado inválido');
         text = processedText;
         medicalCommandCount = details.count || 0;
@@ -133,7 +136,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     const statusCode = failure?.statusCode || 200;
     app.log.info({ event: 'transcription', logId, durationMs: Math.round(performance.now() - started), bytes: size, success: !failure, statusCode });
     return reply.code(statusCode).send(failure ? { success: false, error: failure.message, logId } : {
-      success: true, originalText, text, medicalCommandCount, medicalCommands, logId, completionToken,
+      success: true, originalText, text, medicalCommandCount, medicalCommands, exam, examResolution: { source: 'automatic' }, logId, completionToken,
     });
   });
 }

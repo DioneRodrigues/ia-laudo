@@ -66,7 +66,10 @@
         const fields = [
           ["Paciente", log.patient?.name],
           ["Sexo/idade", [log.patient?.gender, log.patient?.age].filter(Boolean).join(", ") || log.patient?.patientInfoRaw],
-          ["Exame", log.exam?.name], ["Data", log.date], ["Hora", log.time],
+          ["Exame", log.exam?.name],
+          ["Contexto", log.exam?.contextLabel || "Não identificado"],
+          ["Resolução", log.exam?.resolution === 'manual' ? 'Manual' : 'Automática'],
+          ["Comandos", String(log.commands?.length || 0)], ["Data", log.date], ["Hora", log.time],
           ["Duração do áudio", duration(log.audio?.durationSeconds)],
           ["Tempo de transcrição", `${((log.transcription?.durationMs || 0) / 1000).toFixed(1)}s`],
           ["Status", log.status === "success" ? "Sucesso" : `Erro${log.error?.stage ? ` · ${log.error.stage}` : ""}`],
@@ -75,6 +78,7 @@
           metadata.append(element("dt", "", term), element("dd", "", value(text)));
         }
         details.append(metadata);
+        if (!log.exam?.contextId) details.append(element('p', 'ev-exam-warning', '⚠ Exame não identificado. Comandos médicos específicos desabilitados.'));
         const original = element("p", "ev-log-original-text");
         appendHighlightedText(original, log.transcription?.originalText, log.commands);
         details.append(section("Transcrição original", original));
@@ -105,6 +109,7 @@
         card.append(element("strong", "", `${log.date || "—"} ${log.time || ""}`));
         card.append(element("span", "", value(log.patient?.name)));
         card.append(element("span", "", value(log.exam?.name)));
+        card.append(element('span', log.exam?.contextId ? '' : 'ev-exam-warning', `Contexto: ${log.exam?.contextLabel || '⚠ Não identificado'} · Resolução: ${log.exam?.resolution === 'manual' ? 'Manual' : 'Automática'}`));
         const status = ({ recording: "Gravando", transcribing: "Transcrevendo", processing: "Processando", inserting: "Inserindo", success: "Sucesso", error: "Erro" })[log.status] || "Registro";
         card.append(element("small", "", `${duration(log.audio?.durationSeconds)} · ${log.commands?.length || 0} comandos · ${status}`));
         list.append(card);

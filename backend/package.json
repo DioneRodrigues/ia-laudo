@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node --env-file=.env src/server.js",
     "dev": "node --env-file=.env --watch src/server.js",
-    "test": "node --test test/backend.test.js test/commandProcessor.test.js test/transcriptionService.test.js test/admin.test.js",
+    "test": "node --test test/backend.test.js test/commandProcessor.test.js test/examContext.test.js test/transcriptionService.test.js test/admin.test.js",
     "test:browser": "node --test test/browser.test.js"
   },
   "dependencies": {

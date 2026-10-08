@@ -148,3 +148,5 @@
 @media (prefers-reduced-motion: reduce) {
   #eden-voice-transcriber-root .ev-record-dot, #eden-voice-transcriber-root .ev-wave i { animation: none !important; }
 }
+
+#eden-voice-transcriber-root .ev-exam-warning { color: #92400e; background: #fffbeb; padding: 8px; border-radius: 6px; }

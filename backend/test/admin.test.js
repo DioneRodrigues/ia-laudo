@@ -9,7 +9,7 @@ import { createTranscriptionLogStore } from '../src/services/transcriptionLogSto
 function transcriptionRequest() {
   const boundary = 'eden-admin-test';
   const fields = [
-    ['patientContext', JSON.stringify({ patientName: 'Paciente Teste', gender: 'Feminino', age: '42 anos', examName: 'Ultrassonografia' })],
+    ['patientContext', JSON.stringify({ patientName: 'Paciente Teste', gender: 'Feminino', age: '42 anos', examName: 'Ultrassonografia da Tireoide' })],
     ['audioDurationSeconds', '47'], ['recordingStartedAt', '2026-10-05T09:00:00-03:00'],
     ['recordingFinishedAt', '2026-10-05T09:00:47-03:00'],
   ].map(([name, value]) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`).join('');
@@ -51,7 +51,9 @@ test('transcrição e callback de inserção alimentam o painel administrativo',
   const pending = (await app.inject({ method: 'GET', url: '/admin/api/logs', headers: { cookie } })).json().logs[0];
   assert.equal(pending.status, 'processing');
   assert.equal(pending.patient.name, 'Paciente Teste');
-  assert.equal(pending.exam.name, 'Ultrassonografia');
+  assert.equal(pending.exam.name, 'Ultrassonografia da Tireoide');
+  assert.equal(pending.exam.contextId, 'tireoide');
+  assert.equal(pending.exam.resolution, 'automatic');
   assert.equal(pending.audio.durationSeconds, 47);
   assert.equal(pending.transcription.originalText, 'Chammas três.');
   assert.equal(pending.commands.length, 1);
