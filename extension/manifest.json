@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Eden Voice Transcriber",
-  "version": "0.6.0",
+  "version": "0.9.5",
   "description": "Grava um ditado, transcreve e insere o texto no Eden AI.",
   "permissions": ["storage"],
   "host_permissions": ["http://10.33.0.7/*", "https://10.33.0.7/*"],
@@ -16,6 +16,7 @@
         "content/logConfig.js",
         "utils/logger.js",
         "storage/logStore.js",
+        "storage/audioStoreClient.js",
         "content/patientContext.js",
         "content/monitoring.js",
         "content/recorder.js",
@@ -23,6 +24,8 @@
         "content/edenControls.js",
         "content/medicalCommandCatalog.js",
         "content/apiClient.js",
+        "services/commandProcessor.generated.js",
+        "services/recordingProcessor.js",
         "content/ui.js",
         "content/content.js"
       ],
@@ -32,7 +35,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["assets/clinicadamama-logo.png"],
+      "resources": [
+        "assets/clinicadamama-logo.png",
+        "storage/broker.html",
+        "storage/player.html"
+      ],
       "matches": ["https://pacs.evacenter.com/*"]
     }
   ]

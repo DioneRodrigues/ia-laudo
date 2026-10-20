@@ -3,12 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node --env-file=.env src/server.js",
     "dev": "node --env-file=.env --watch src/server.js",
-    "test": "node --test test/backend.test.js test/commandProcessor.test.js test/examContext.test.js test/transcriptionService.test.js test/admin.test.js",
-    "test:browser": "node --test test/browser.test.js"
+    "test": "node --test test/clinicalClassifierDiagnostics.test.js test/clinicalSegmentClassifier.test.js test/measurementDetector.test.js test/medicalCommandDetector.test.js test/clinicalPipeline.test.js test/backend.test.js test/commandProcessor.test.js test/examContext.test.js test/transcriptionService.test.js test/admin.test.js",
+    "test:browser": "node --test test/browser.test.js",
+    "test:audio": "node --test test/audioRecovery.test.js test/extensionStorage.test.js",
+    "build:extension": "node scripts/buildExtensionCommands.js",
+    "diagnostics:clinical": "node --env-file=.env scripts/checkClinicalClassifier.js"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildApp } from '../src/app.js';
+import { buildApp as realBuildApp } from '../src/app.js';
 import { getTranscriptionFailureDiagnostics } from '../src/routes/transcribe.js';
 
 test('diagnóstico seguro de falha da transcrição omite mensagem e conteúdo clínico', () => {
@@ -37,7 +37,8 @@ test('contrato, CORS, limites e exclusão de temporários', async (t) => {
     assert.equal(response.statusCode, 200);
     const result = response.json();
     assert.deepEqual(Object.fromEntries(Object.entries(result).filter(([key]) => !['logId', 'completionToken'].includes(key))), {
-      success: true, originalText: 'Texto de teste.', text: 'Texto de teste.', medicalCommandCount: 0, medicalCommands: [],
+      success: true, originalText: 'Texto de teste.', text: '', filteredText: '', measurementText: '', clinicalFilter: { mode: 'deterministic_fallback', fallbackReason: 'AI_CLASSIFIER_UNKNOWN_ERROR', aiStatus: { state: 'failed', called: true, code: 'AI_CLASSIFIER_UNKNOWN_ERROR', status: null, reason: 'unexpected_error', providerUrl: 'https://api.openai.com/v1/responses' }, examContext: { examName: '', examContextId: null, examResolution: 'unresolved' }, segments: [{ id: 0, include: false, reason: 'unknown' }] }, pipelineVersion: 5, measurements: [],
+      filterDetails: { mode: 'deterministic_fallback', commandCandidates: [], measurementHints: [], filteredText: '', includedSegments: 0, ignoredSegments: 1, segments: [{ text: 'Texto de teste.', role: 'unknown', intent: 'unknown', includeInReport: false, confidence: 0 }] }, commandProcessing: { success: true }, medicalCommandCount: 0, medicalCommands: [],
       exam: { name: '', contextId: null, contextLabel: null, matchedAlias: null, resolution: 'unresolved' }, examResolution: { source: 'automatic' },
     });
     assert.match(result.logId, /^[0-9a-f-]{36}$/u);
@@ -132,7 +133,18 @@ test('preserva status HTTP do SDK OpenAI em vez de mascarar erros como 502', asy
   }
 });
 
-test('falha nos comandos preserva transcrição e resposta de sucesso', async (t) => {
+test('TRANSCRIPTION_EMPTY mantém código público e mensagem sem dados clínicos', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-empty-'));
+  const app = await buildApp({ logger: false, uploadsDir, transcribeAudio: async () => { throw Object.assign(new Error('privado'), { code: 'TRANSCRIPTION_EMPTY' }); } });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  const response = await app.inject(upload());
+  assert.equal(response.statusCode, 502);
+  assert.equal(response.json().code, 'TRANSCRIPTION_EMPTY');
+  assert.equal(response.json().error, 'Nenhuma fala foi reconhecida.');
+  assert.deepEqual(await readdir(uploadsDir), []);
+});
+
+test('falha nos comandos preserva transcrição e sinaliza checkpoint incompleto', async (t) => {
   const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-fallback-'));
   const original = 'Nódulo sólido. Chammas 3.';
   const app = await buildApp({ logger: false, uploadsDir,
@@ -143,6 +155,7 @@ test('falha nos comandos preserva transcrição e resposta de sucesso', async (t
   const response = await app.inject(upload());
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().success, true);
+  assert.deepEqual(response.json().commandProcessing, { success: false, code: 'COMMAND_PROCESSING_FAILED' });
   assert.equal(response.json().originalText, original);
   assert.equal(response.json().text, original);
   assert.equal(response.json().medicalCommandCount, 0);
@@ -181,4 +194,32 @@ test('endpoint resolve o nome e mantém apenas comandos do exame, ignorando cont
     assert.equal(result.examResolution.source, 'automatic');
     if (!expected.length) assert.equal(result.text, result.originalText);
   }
+});
+
+function buildApp(options = {}) { return realBuildApp({ classifyClinicalSegments: async () => { throw new Error('Offline test'); }, ...options }); }
+
+test('endpoint IA preserva original, inclui negação sem expansão e persiste classificação', async (t) => {
+  const uploadsDir = await mkdtemp(join(tmpdir(), 'eden-ai-'));
+  const original = 'Não tem nódulo sólido. Siliconoma, ok.';
+  let calls = 0, input, saved;
+  const { createTranscriptionLogStore } = await import('../src/services/transcriptionLogStore.js');
+  const base = createTranscriptionLogStore();
+  const store = { ...base, addTranscript(id, data) { saved = data; return base.addTranscript(id, data); } };
+  const app = await buildApp({ logger: false, uploadsDir, transcriptionLogStore: store,
+    transcribeAudio: async () => original,
+    classifyClinicalSegments: async (args) => { calls++; input = args; return { segments: args.segments.map(s => ({ id: s.id, include: s.id === 0, reason: s.id === 0 ? 'report' : 'unknown' })) }; },
+  });
+  t.after(async () => { await app.close(); await rm(uploadsDir, { recursive: true, force: true }); });
+  const extra = '--eden-test\r\nContent-Disposition: form-data; name="patientContext"\r\n\r\n' + JSON.stringify({ examName: 'Mama', patientName: 'PRIVATE' }) + '\r\n';
+  const response = await app.inject(upload({ extra }));
+  assert.equal(response.statusCode, 200);
+  const result = response.json();
+  assert.equal(calls, 1); assert.equal(result.originalText, original); assert.equal(result.filteredText, original);
+  assert.equal(result.clinicalFilter.mode, 'ai');
+  assert.equal(result.medicalCommandCount, 1); assert.equal(result.medicalCommands[0].id, 'mama-siliconoma');
+  assert.ok(result.text.startsWith('Não tem nódulo sólido.'));
+  assert.equal(result.filterDetails.segments[0].commandCandidates[0].execute, false);
+  assert.equal(result.filterDetails.segments[1].reason, 'medical_command');
+  assert.deepEqual(saved.clinicalFilter, result.clinicalFilter);
+  assert.ok(!JSON.stringify(input).includes('PRIVATE'));
 });

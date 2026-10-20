@@ -1,3 +1,4 @@
+import { isMedicalCommandNegated } from './medicalCommandNegation.js';
 import {
   resolveExamContext,
   resolveExamMetadata,
@@ -97,6 +98,7 @@ export const MEDICAL_COMMANDS = [
   },
   {
     id: "chammas-1",
+    allowNegatedContext: true,
     exams: ["tireoide"],
     label: "Tireoide - Chammas I",
     aliases: [
@@ -236,7 +238,7 @@ export const MEDICAL_COMMANDS = [
     id: "mama-siliconoma",
     exams: ["mama"],
     label: "Mama - Siliconoma",
-    aliases: ["siliconoma"],
+    aliases: ["siliconoma", "siliconeoma"],
     replacement:
       "- Imagem hiperecóica, contornos bem definidos, sem fenômeno acústico posterior, podendo corresponder a siliconoma.",
   },
@@ -280,6 +282,7 @@ export const MEDICAL_COMMANDS = [
   },
   {
     id: "mama-lesao-nao-nodular",
+    allowNegatedContext: true,
     exams: ["mama"],
     label: "Mama - Lesão não nodular",
     aliases: ["lesão não nodular", "lesao nao nodular"],
@@ -459,6 +462,7 @@ export const MEDICAL_COMMANDS = [
   },
   {
     id: "transvaginal-ovarios-nao-visualizados",
+    allowNegatedContext: true,
     exams: ["transvaginal"],
     label: "Transvaginal - Ovários não visualizados",
     aliases: ["ovários não visualizados", "ovarios nao visualizados"],
@@ -587,6 +591,7 @@ export const MEDICAL_COMMANDS = [
   },
   {
     id: "transvaginal-histerectomia",
+    allowNegatedContext: true,
     exams: ["transvaginal"],
     label: "Transvaginal - Histerectomia",
     aliases: [
@@ -604,6 +609,7 @@ export const MEDICAL_COMMANDS = [
   // =========================================================
   {
     id: "abdome-colecistectomia",
+    allowNegatedContext: true,
     exams: ["abdome"],
     label: "Abdome - Colecistectomia prévia",
     aliases: [
@@ -829,6 +835,54 @@ function comparisonWithOffsets(text) {
   return { comparison, starts, ends };
 }
 
+export function findMedicalCommandCandidates(text, allowedCommands, logger = console) {
+  const { comparison, starts, ends } = comparisonWithOffsets(text);
+  const owners = new Map();
+  const candidates = [];
+
+  for (const command of allowedCommands) {
+    for (const alias of command.aliases) {
+      const key = normalizeForMatch(alias);
+      if (!key) continue;
+
+      const owner = owners.get(key);
+      if (owner) {
+        if (owner !== command) {
+          (logger.warn || logger.info).call(
+            logger,
+            `[Eden Voice] WARN: Alias duplicado ${JSON.stringify(alias)} entre ${owner.id} e ${command.id}`,
+          );
+        }
+        continue;
+      }
+
+      owners.set(key, command);
+      const regex = aliasToFlexibleRegex(alias);
+      if (!regex) continue;
+
+      for (const match of comparison.matchAll(regex)) {
+        const start = starts[match.index];
+        const end = ends[match.index + match[0].length - 1];
+
+        if (Number.isInteger(start) && Number.isInteger(end)) {
+          candidates.push({ start, end, command, alias });
+        }
+      }
+    }
+  }
+
+  // Esquerda para direita; em empate, o maior trecho vence.
+  candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+
+  const selected = [];
+  let end = -1;
+  for (const candidate of candidates) {
+    if (candidate.start < end) continue;
+    selected.push(candidate); end = candidate.end;
+  }
+  return selected;
+}
+
 export function createMedicalCommandProcessor(commands) {
   return function processMedicalCommands(
     text,
@@ -871,50 +925,14 @@ export function createMedicalCommandProcessor(commands) {
     );
     logger.info("[Eden Voice] Processando comandos médicos");
 
-    const { comparison, starts, ends } = comparisonWithOffsets(text);
-    const owners = new Map();
-    const candidates = [];
-
-    for (const command of allowedCommands) {
-      for (const alias of command.aliases) {
-        const key = normalizeForMatch(alias);
-        if (!key) continue;
-
-        const owner = owners.get(key);
-        if (owner) {
-          if (owner !== command) {
-            (logger.warn || logger.info).call(
-              logger,
-              `[Eden Voice] WARN: Alias duplicado ${JSON.stringify(alias)} entre ${owner.id} e ${command.id}`,
-            );
-          }
-          continue;
-        }
-
-        owners.set(key, command);
-        const regex = aliasToFlexibleRegex(alias);
-        if (!regex) continue;
-
-        for (const match of comparison.matchAll(regex)) {
-          const start = starts[match.index];
-          const end = ends[match.index + match[0].length - 1];
-
-          if (Number.isInteger(start) && Number.isInteger(end)) {
-            candidates.push({ start, end, command, alias });
-          }
-        }
-      }
-    }
-
-    // Esquerda para direita; em empate, o maior trecho vence.
-    candidates.sort((a, b) => a.start - b.start || b.end - a.end);
+    const candidates = findMedicalCommandCandidates(text, allowedCommands, logger);
 
     let cursor = 0;
     const pieces = [];
     const applied = [];
 
     for (const { start, end, command, alias } of candidates) {
-      if (start < cursor) continue;
+      if (start < cursor || isMedicalCommandNegated(text, start, end, command)) continue;
 
       const detectedText = text.slice(start, end);
       pieces.push(text.slice(cursor, start), command.replacement);

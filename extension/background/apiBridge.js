@@ -7,7 +7,7 @@
     ['audio/wav', 'wav'], ['audio/x-wav', 'wav'], ['audio/mpeg', 'mp3'],
   ]);
 
-  function createHandler({ apiBaseUrl, fetchImpl = fetch, extensionId }) {
+  function createHandler({ apiBaseUrl, fetchImpl = fetch, extensionId, getRecording }) {
     const activeRequests = new Map();
     const base = new URL(apiBaseUrl);
     if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password) {
@@ -15,7 +15,7 @@
     }
 
     const isAllowedRoute = (method, path) => (method === 'GET' && path === '/medical-commands')
-      || (method === 'POST' && path === '/transcribe')
+      || (method === 'POST' && ['/transcribe', '/classify-clinical-segments'].includes(path))
       || (method === 'POST' && /^\/transcribe\/[0-9a-f-]{36}\/status$/u.test(path));
 
     async function handle(message, sender) {
@@ -40,21 +40,16 @@
       try {
         const options = { method, signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error' };
         if (path === '/transcribe') {
-          const { audioBase64, audioType, fields } = message;
+          const { fields } = message;
+          const recording = await getRecording?.(message.recordingId);
+          const audio = recording?.audio?.blob;
+          const audioType = audio?.type.split(';')[0].toLowerCase();
           const extension = audioFormats.get(audioType);
-          if (!extension || typeof audioBase64 !== 'string' || audioBase64.length > Math.ceil(AUDIO_LIMIT * 4 / 3) + 8) {
-            return { ok: false, status: 400, error: 'Áudio ou formato inválido.' };
-          }
-          if (!fields || typeof fields !== 'object'
-            || !['patientContext', 'audioDurationSeconds', 'recordingStartedAt', 'recordingFinishedAt'].every((key) => typeof fields[key] === 'string')) {
-            return { ok: false, status: 400, error: 'Metadados do ditado inválidos.' };
-          }
-          const binary = atob(audioBase64);
-          if (binary.length > AUDIO_LIMIT) return { ok: false, status: 413, error: 'O áudio excedeu o limite de 20 MB.' };
-          const bytes = new Uint8Array(binary.length);
-          for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+          if (!extension || !(audio instanceof Blob) || !audio.size) return { ok: false, status: 400, error: 'Áudio local inválido.' };
+          if (audio.size > AUDIO_LIMIT) return { ok: false, status: 413, error: 'O áudio excedeu o limite de 20 MB.' };
+          if (!fields || !['patientContext', 'audioDurationSeconds', 'recordingStartedAt', 'recordingFinishedAt'].every((key) => typeof fields[key] === 'string')) return { ok: false, status: 400, error: 'Metadados do ditado inválidos.' };
           const form = new FormData();
-          form.append('audio', new Blob([bytes], { type: audioType }), `laudo.${extension}`);
+          form.append('audio', audio, `laudo.${extension}`);
           for (const key of ['patientContext', 'audioDurationSeconds', 'recordingStartedAt', 'recordingFinishedAt']) form.append(key, fields[key]);
           options.body = form;
         } else if (message.json !== undefined) {

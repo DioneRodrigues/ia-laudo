@@ -383,3 +383,17 @@ O ditado fica vinculado à URL e ao elemento editor desde o início da gravaçã
 O backend cria um diretório temporário por requisição dentro de `uploads/`, salva um único arquivo e remove o diretório em `finally` antes de responder, inclusive em erro do provedor ou multipart. Falha de exclusão gera erro explícito; verifique `uploads/` nesse caso. Encerrar o processo à força ou desligar a máquina não executa `finally`: após um crash, remova eventuais resíduos antes de retomar o uso.
 
 O histórico da extensão guarda localmente paciente/exame, transcrição original, replacements médicos e texto final em `chrome.storage.local`. A cópia central fica temporariamente na memória do backend e só é acessível após login em `/admin`. Esses dados não são enviados a analytics ou endpoints de terceiros; os metadados seguem junto do áudio na chamada existente `/transcribe` e o status final usa callback do mesmo backend. O backend apaga o áudio temporário após transcrever. O envio à OpenAI é necessário para transcrição; a retenção do provedor segue as condições da conta/API e não é controlada pela limpeza dos históricos.
+
+
+### Classificação clínica por IA
+
+O backend classifica segmentos da transcrição por ID; a extensão insere texto reconstruído dos segmentos originais. Comandos protegidos, negação e volume continuam determinísticos. Configuração opcional no ambiente do backend:
+
+```dotenv
+ENABLE_AI_FILTER=true
+USE_DETERMINISTIC_FALLBACK=true
+CLINICAL_FILTER_TIMEOUT_MS=8000
+CLINICAL_FILTER_MODEL=gpt-4o-mini
+```
+
+A chave `OPENAI_API_KEY` existente permanece apenas no backend. Falhas/timeout acionam o filtro determinístico atual, e o histórico identifica o modo usado. Retries do editor reutilizam a classificação persistida. Consulte [fluxo, segurança e testes](docs/CLINICAL_DICTATION.md).
