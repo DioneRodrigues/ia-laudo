@@ -15,4 +15,10 @@
     EXAM_CONTEXT_SELECTOR: "",
   });
   globalThis.EdenVoice ||= { CONFIG };
+  globalThis.EdenVoice.AUDIO_RETENTION ||= Object.freeze({
+    SUCCESS_HOURS: 2,
+    FAILED_HOURS: 24,
+    MAX_ENTRIES: 30,
+    MAX_AUTO_RETRIES: 3,
+  });
 })();

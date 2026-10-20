@@ -1,0 +1,5 @@
+:root { color-scheme: light; font: 13px/1.4 "Segoe UI", Arial, sans-serif; color: #302a40; background: #f6f4fa; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 8px 10px; }
+p { margin: 0 0 4px; min-height: 18px; color: #5b4f82; font-size: 11px; }
+audio { display: block; width: 100%; height: 40px; }

@@ -4,12 +4,11 @@
   EV.initialized = true;
   const logger = EV.Logger || { info: (...args) => console.info('[Eden Voice]', ...args), warn: (...args) => console.warn('[Eden Voice]', ...args), error: (...args) => console.error('[Eden Voice]', ...args), timestamp: () => new Date().toISOString(), formatDateTime: () => ({ date: '', time: '' }), text: () => {} };
   logger.info('Extensão carregada');
-  let ui, recorder, context, blob, audioURL, timer, controller, stopPauseWatch;
+  let ui, recorder, context, blob, audioURL, timer, stopPauseWatch;
   let state = 'idle', error = '', text = '', epoch = 0;
   let medicalCommandCount = 0;
   let medicalCommands = [];
   let currentRecording = null;
-  let remoteLogId = null, remoteCompletionToken = null;
   let closeRequested = false;
   const draw = () => ui?.render({ state, error, audioURL, text, medicalCommandCount, medicalCommands, exam: currentRecording?.exam });
   const safePatientContext = () => {
@@ -22,8 +21,6 @@
     try { contextSnapshot = EV.captureContext(); }
     catch (failure) { logger.warn('Não foi possível capturar o contexto do editor', failure); contextSnapshot = null; }
     const patient = safePatientContext();
-    logger.info(`Paciente: ${patient.patientName || 'não identificado'}`);
-    logger.info(`Exame: ${patient.examName || 'não identificado'}`);
     return {
       id: globalThis.crypto?.randomUUID?.() || `ev-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       timestamp: logger.timestamp(startedAt), ...logger.formatDateTime(startedAt),
@@ -36,7 +33,7 @@
     };
   };
   const saveCurrentLog = (status, failure = null) => {
-    if (!currentRecording) return;
+    if (!currentRecording || currentRecording.persisted) return;
     const log = { ...currentRecording, status, error: failure ? { stage: failure.stage, message: String(failure.message || failure) } : null };
     delete log.recordingStartedPerf; delete log.recordingContext; delete log.editorContext; delete log.currentStage;
     try {
@@ -62,18 +59,6 @@
       saveCurrentLog('error', { stage, message: failure?.message || failure });
     }
   };
-  const reportRemoteStatus = async (status, failure = null) => {
-    if (!remoteLogId || !remoteCompletionToken) return;
-    const logId = remoteLogId, completionToken = remoteCompletionToken;
-    try {
-      const response = await EV.ApiClient.request({ path: `/transcribe/${encodeURIComponent(logId)}/status`, method: 'POST',
-        json: { status, completionToken, ...(failure ? { error: failure } : {}) } });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (remoteLogId === logId) { remoteLogId = null; remoteCompletionToken = null; }
-    } catch (storageFailure) {
-      logger.warn(`Não foi possível atualizar o painel administrativo: ${storageFailure.message}`);
-    }
-  };
   const fail = (message, next = 'error') => {
     error = message; state = next;
     logger.error(message);
@@ -87,18 +72,17 @@
     audioURL = '';
   };
   const reset = () => {
-    epoch++; controller?.abort(); controller = null;
-    releaseAudio(); context = null; currentRecording = null; remoteLogId = null; remoteCompletionToken = null; text = ''; error = ''; state = 'idle';
+    epoch++;
+    releaseAudio(); context = null; currentRecording = null; text = ''; error = ''; state = 'idle';
     medicalCommandCount = 0;
     medicalCommands = [];
     ui?.time(0); draw();
   };
   const start = async () => {
-    if (state !== 'idle') return;
+    if (state !== 'idle' || EV.RecordingProcessor.processingIds.size) return;
     closeRequested = false;
     const operation = ++epoch;
     try {
-      remoteLogId = null; remoteCompletionToken = null;
       currentRecording = createRecording();
       context = EV.captureContext();
       currentRecording.editorContext = context;
@@ -117,8 +101,22 @@
             recordFailure('microphone', failure); epoch++; releaseAudio(); fail(failure.message);
           }
         });
+      const recordingSnapshot = currentRecording;
       recorder = new EV.AudioRecorder((failure) => {
         recordFailure('recording', failure); epoch++; releaseAudio(); fail(failure.message);
+      }, async (finalBlob, durationSeconds) => {
+        recordingSnapshot.recordingFinishedAt = new Date().toISOString();
+        recordingSnapshot.audio.durationSeconds = durationSeconds;
+        if (currentRecording === recordingSnapshot) {
+          blob = finalBlob;
+        }
+        try { await persistFinalAudio(recordingSnapshot, finalBlob); }
+        finally {
+          if (currentRecording === recordingSnapshot) {
+            if (audioURL) URL.revokeObjectURL(audioURL);
+            audioURL = URL.createObjectURL(finalBlob);
+          }
+        }
       });
       await recorder.start();
       if (operation !== epoch) return;
@@ -153,6 +151,24 @@
       recordFailure('recording', failure); epoch++; releaseAudio(); fail(failure.message);
     }
   };
+  const persistFinalAudio = async (record = currentRecording, finalBlob = blob) => {
+    if (!record || record.persisted) return;
+    const now = new Date().toISOString();
+    const row = {
+      id: record.id, createdAt: record.recordingStartedAt, updatedAt: now,
+      date: record.date, time: record.time, status: 'pending',
+      patient: record.patient, exam: record.exam,
+      audio: { blob: finalBlob, mimeType: finalBlob.type, sizeBytes: finalBlob.size, durationSeconds: record.audio.durationSeconds },
+      recording: { startedAt: record.recordingStartedAt, finishedAt: record.recordingFinishedAt || now },
+      processing: { retryCount: 0, attemptCount: 0, autoAttempts: 0, lastAttemptAt: null, lastError: null },
+      transcription: { originalText: null, processedText: null, durationMs: null }, commands: [],
+      insertion: { success: false, insertedAt: null, error: null },
+    };
+    await EV.AudioStore.saveRecording(row);
+    record.persisted = true;
+    logger.info(`Áudio salvo localmente. Recording ID: ${row.id}. Status: pending`);
+    void refreshPending();
+  };
   const stop = async (autoTranscribe = false) => {
     if (!['recording', 'paused'].includes(state)) return;
     stopPauseWatch?.(); stopPauseWatch = null;
@@ -160,141 +176,80 @@
     clearInterval(timer); state = 'stopping'; draw();
     try {
       const result = await recorder.stop();
-      if (operation !== epoch) return;
-      blob = result; audioURL = URL.createObjectURL(blob); state = 'ready';
+      blob = result;
+      if (!audioURL) audioURL = URL.createObjectURL(blob);
       if (currentRecording) {
         currentRecording.recordingFinishedAt = new Date().toISOString();
         currentRecording.audio.recordingFinishedAt = currentRecording.recordingFinishedAt;
         currentRecording.audio.durationSeconds = recorder?.durationSeconds() ?? currentRecording.audio.durationSeconds;
         currentRecording.audio.sizeBytes = blob.size;
       }
+      await persistFinalAudio();
+      if (operation !== epoch) return;
+      state = 'ready';
       logger.info('Gravação finalizada');
       draw();
       if (autoTranscribe && !closeRequested) await transcribe();
-    } catch (failure) { if (operation === epoch) { recordFailure('recording', failure); releaseAudio(); fail(failure.message); } }
+    } catch (failure) { if (operation === epoch) { recordFailure('storage', failure); fail(currentRecording?.persisted ? `${failure.message} Áudio preservado localmente; consulte o histórico.` : `${failure.message} O áudio NÃO está protegido até a confirmação do salvamento. Mantenha esta página aberta e tente Transcrever novamente.`, blob ? 'ready' : 'error'); } }
   };
   const transcribe = async () => {
-    if (state !== 'ready' || !blob) return;
-    if (!EV.contextIsCurrent(context)) { invalidate(); return; }
-    const finalContext = safePatientContext();
-    if (currentRecording && !EV.isSamePatientContext(currentRecording.recordingContext, finalContext)) {
-      logger.warn('Paciente ou exame mudou durante a gravação; comandos e inserção cancelados por segurança');
-      invalidate(); return;
-    }
+    if (state !== 'ready' || !currentRecording) return;
     const operation = epoch;
     state = 'transcribing'; error = ''; draw();
-    let stage = 'transcription';
-    if (currentRecording) {
-      currentRecording.status = 'transcribing';
-      currentRecording.currentStage = stage;
-      currentRecording.transcription.startedAt = new Date().toISOString();
-      currentRecording.transcription.startedPerf = performance.now();
-      saveCurrentLog('transcribing');
-    }
-    controller = new AbortController();
-    const requestController = controller;
-    let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; requestController.abort(); }, EV.CONFIG.REQUEST_TIMEOUT_MS);
     try {
-      const extensions = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/wav': 'wav', 'audio/mpeg': 'mp3' };
-      const extension = extensions[blob.type.split(';')[0]];
-      if (!extension) throw new Error('Formato de gravação não suportado pelo backend. Use o Chrome atualizado.');
-      const fields = {
-        patientContext: JSON.stringify(currentRecording?.recordingContext || {}),
-        audioDurationSeconds: String(currentRecording?.audio.durationSeconds || 0),
-        recordingStartedAt: currentRecording?.recordingStartedAt || '',
-        recordingFinishedAt: currentRecording?.recordingFinishedAt || '',
-      };
-      logger.info('Enviando áudio para transcrição');
-      const response = await EV.ApiClient.request({ path: '/transcribe', method: 'POST', audio: blob, fields }, { signal: requestController.signal });
-      const data = response.data;
-      if (!response.ok) throw new Error(response.error || `Falha HTTP ${response.status} na transcrição.`);
-      if (data?.success !== true) throw new Error(typeof data?.error === 'string' ? data.error : `Falha HTTP ${response.status} na transcrição.`);
-      if (typeof data.text !== 'string' || !data.text.trim()) throw new Error('Resposta do backend sem text válido.');
+      if (!currentRecording.persisted) await persistFinalAudio();
+      const automatic = !currentRecording.attempted; currentRecording.attempted = true;
+      const row = await EV.RecordingProcessor.processRecording(currentRecording.id, {
+        automatic,
+        isActive: () => operation === epoch,
+        onStage: (next) => { if (operation === epoch) { state = next; draw(); } },
+      });
       if (operation !== epoch) return;
-      remoteLogId = typeof data.logId === 'string' ? data.logId : null;
-      remoteCompletionToken = typeof data.completionToken === 'string' ? data.completionToken : null;
-      if (remoteLogId) logger.info(`Registro de monitoramento criado: ${remoteLogId}`);
-      else logger.warn('O backend respondeu sem ID de monitoramento; publique a versão mais recente do backend');
-      stage = 'command-processing';
-      if (currentRecording) currentRecording.currentStage = stage;
-      logger.info('Transcrição concluída');
-      if (currentRecording) { currentRecording.status = 'processing'; saveCurrentLog('processing'); }
-      const originalText = typeof data.originalText === 'string' ? data.originalText : data.text;
-      logger.text('Transcrição recebida', originalText);
-      // O backend já retorna o texto final; não expandir comandos novamente.
-      text = data.text;
-      medicalCommandCount = Number.isSafeInteger(data.medicalCommandCount) && data.medicalCommandCount >= 0
-        ? data.medicalCommandCount : 0;
-      medicalCommands = Array.isArray(data.medicalCommands) ? data.medicalCommands.filter((command) => command
-        && ['id', 'label', 'alias', 'detectedText', 'replacement'].every((key) => typeof command[key] === 'string')) : [];
-      logger.info(`Comandos aplicados: ${medicalCommands.length}`);
-      if (currentRecording) {
-        if (data.exam) currentRecording.exam = data.exam;
-        currentRecording.examResolution = data.examResolution || { source: 'automatic' };
-        currentRecording.transcription.originalText = originalText;
-        currentRecording.transcription.finishedAt = new Date().toISOString();
-        currentRecording.transcription.durationMs = currentRecording.transcription.startedPerf
-          ? performance.now() - currentRecording.transcription.startedPerf : 0;
-        delete currentRecording.transcription.startedPerf;
-        currentRecording.commands = medicalCommands.map(({ id, label, alias, detectedText, replacement }) => ({ id, label, alias, detectedText, replacement }));
-        currentRecording.finalText = data.text;
-        currentRecording.status = 'inserting';
-        saveCurrentLog('inserting');
+      if (!row) { fail('Gravação já está em processamento. Acompanhe no histórico.', 'ready'); return; }
+      currentRecording.exam = row.exam;
+      text = row.transcription?.processedText || '';
+      medicalCommands = row.commands || []; medicalCommandCount = medicalCommands.length;
+      if (row.status === 'success') {
+        currentRecording.status = 'success'; releaseAudio(); text = '';
+        state = row.insertion?.skipped ? 'filtered' : EV.CONFIG.AUTO_SUBMIT ? 'sent' : 'success'; draw();
+      } else {
+        fail(row.processing?.lastError?.message || 'Áudio salvo localmente. Aguardando conexão; consulte o histórico.', 'ready');
       }
-      releaseAudio();
-      if (!EV.contextIsCurrent(context) || !EV.isSamePatientContext(currentRecording?.recordingContext, safePatientContext())) throw new Error('O paciente ou exame mudou durante a transcrição. Confira o exame e copie o texto manualmente.');
-      stage = 'eden-editor';
-      if (currentRecording) currentRecording.currentStage = stage;
-      await EV.insertTextIntoEden(text, context, () => operation === epoch);
-      if (operation !== epoch) return;
-      if (EV.CONFIG.AUTO_SUBMIT) {
-        state = 'submitting'; draw();
-        const button = await EV.waitForEdenSubmit(context, () => operation === epoch
-          && EV.isSamePatientContext(currentRecording?.recordingContext, safePatientContext()));
-        if (operation !== epoch) return;
-        // O clique pode limpar/desmontar o editor imediatamente no React.
-        state = 'sent';
-        EV.clickEdenSubmit(button, context);
-        logger.info('Texto inserido no Eden');
-        saveCurrentLog('success');
-        void reportRemoteStatus('success');
-        text = ''; draw();
-        return;
-      }
-      logger.info('Texto inserido no Eden');
-      saveCurrentLog('success');
-      void reportRemoteStatus('success');
-      text = ''; state = 'success'; draw();
-    } catch (failure) {
-      if (operation !== epoch) return;
-      recordFailure(stage, failure);
-      const message = timedOut ? 'Tempo limite de transcrição excedido. Tente novamente.'
-        : failure instanceof TypeError ? 'A extensão não conseguiu acessar o backend. Confirme o IP em API_BASE_URL, a permissão do host no manifest e o acesso à rede/VPN.'
-          : failure.message;
-      void reportRemoteStatus('error', { stage, message });
-      fail(message, text ? 'recovery' : blob ? 'ready' : 'error');
-    } finally { clearTimeout(timeout); if (controller === requestController) controller = null; }
+    } catch (failure) { if (operation === epoch) fail(failure.message, 'ready'); }
   };
   const showHistory = async () => {
     ui?.showHistory();
     try {
-      const logs = await EV.LogStore.getLogs();
-      let selectedId = null;
-      const renderHistory = () => EV.Monitoring.render(ui.historyContent(), logs, selectedId, {
-        onSelect: (id) => { selectedId = id; renderHistory(); },
-        onClear: async () => {
-          if (!globalThis.confirm('Tem certeza que deseja apagar o histórico local do Eden Voice?')) return;
-          try { await EV.LogStore.clearLogs(); logs.splice(0); selectedId = null; renderHistory(); }
-          catch (failure) { logger.error(`Falha de monitoramento (storage): ${failure.message}`); }
+      await EV.AudioStore.cleanupRecordings();
+      const recordings = await EV.AudioStore.getRecentRecordings();
+      const recordedIds = new Set(recordings.map((row) => row.id));
+      const legacy = (await EV.LogStore.getLogs()).filter((row) => !recordedIds.has(row.id));
+      EV.Monitoring.renderRecordings(ui.historyContent(), recordings, {
+        onRetry: async (id) => { await EV.RecordingProcessor.processRecording(id); await showHistory(); },
+        onDelete: async (id) => {
+          if (!globalThis.confirm('Tem certeza que deseja excluir esta gravação local?')) return;
+          if (!await EV.AudioStore.claim(id)) throw new Error('Gravação em processamento. Aguarde para excluir.');
+          try { await EV.AudioStore.deleteRecording(id); } finally { await EV.AudioStore.release(id); }
+          await showHistory(); await refreshPending();
         },
-        onBack: () => { if (selectedId) { selectedId = null; renderHistory(); } else ui?.hideHistory(); },
+        onBack: () => { EV.Monitoring.releasePlayers(); ui?.hideHistory(); },
       });
-      renderHistory();
-    } catch (failure) {
-      logger.warn(`Falha de monitoramento (storage): ${failure.message}`);
-      EV.Monitoring.render(ui.historyContent(), [], null, { onBack: () => ui?.hideHistory(), onClear() {}, onSelect() {} });
-    }
+      ui.historyContent().querySelector('.ev-legacy-history')?.remove();
+      if (legacy.length) {
+        const section = document.createElement('div'); section.className = 'ev-legacy-history'; ui.historyContent().append(section);
+        let selectedId = null;
+        const render = () => EV.Monitoring.render(section, legacy, selectedId, {
+          onSelect: (id) => { selectedId = id; render(); }, onBack: () => { selectedId = null; render(); },
+          onClear: async () => { if (globalThis.confirm('Apagar os logs antigos? Os áudios locais serão preservados.')) { await EV.LogStore.clearLogs(); legacy.splice(0); render(); } },
+        }); render();
+      }
+    } catch (failure) { fail(`Falha ao abrir histórico: ${failure.message}`); }
+  };
+  const refreshPending = async () => {
+    try {
+      const rows = await EV.AudioStore.getRecentRecordings();
+      ui?.pending(rows.filter((row) => row.status !== 'success').length);
+    } catch (failure) { logger.warn(`Armazenamento de áudio indisponível: ${failure.message}`); }
   };
   const showMedicalCommands = async () => {
     ui?.showCommands();
@@ -324,8 +279,7 @@
   const invalidate = () => {
     const stage = currentRecording?.currentStage || 'recording';
     recordFailure(stage, new Error('A página ou o editor mudou durante a operação.'));
-    void reportRemoteStatus('error', { stage, message: 'A página ou o editor mudou durante a operação.' });
-    epoch++; controller?.abort(); controller = null; releaseAudio(); context = null;
+    epoch++; releaseAudio(); context = null;
     fail('A página ou o editor mudou. Confira o exame e inicie um novo ditado.', text ? 'recovery' : 'error');
   };
   const closePanel = async () => {
@@ -337,30 +291,29 @@
       // Cancelar antes de liberar o editor impede sobrescrever uma edição manual posterior.
       const stage = currentRecording?.currentStage || 'transcription';
       recordFailure(stage, new Error('Operação cancelada ao fechar o painel.'));
-      void reportRemoteStatus('error', { stage, message: 'Operação cancelada ao fechar o painel.' });
-      epoch++; controller?.abort(); controller = null;
+      epoch++;
       state = text ? 'recovery' : blob ? 'ready' : 'idle';
       draw();
     }
-    ui?.close();
+    EV.Monitoring.releasePlayers(); ui?.close();
   };
   const reconcile = () => {
-    if (context && !['idle', 'error', 'recovery', 'success', 'sent'].includes(state) && !EV.contextIsCurrent(context)) invalidate();
+    if (context && !['stopping', 'idle', 'error', 'recovery', 'success', 'sent', 'filtered'].includes(state) && !EV.contextIsCurrent(context)) invalidate();
     let editor;
     try { editor = EV.findEdenEditor(); } catch { ui?.attach(null); return; }
     if (!ui) {
       if (!document.body || document.getElementById('eden-voice-transcriber-root')) return;
-      ui = EV.createUI({ start, pause: togglePause, resume: togglePause, stop: () => stop(), transcribe, reset, close: closePanel, history: showHistory, commands: showMedicalCommands }); draw();
+      ui = EV.createUI({ start, pause: togglePause, resume: togglePause, stop: () => stop(), transcribe, reset, close: closePanel, history: showHistory, commands: showMedicalCommands }); draw(); void refreshPending();
     }
     ui.attach(editor);
   };
   EV.bindEdenControls({
-    busy: () => ['requesting', 'recording', 'paused', 'stopping', 'transcribing', 'submitting'].includes(state),
+    busy: () => EV.RecordingProcessor.processingIds.size > 0 || ['requesting', 'recording', 'paused', 'stopping', 'transcribing', 'submitting'].includes(state),
     toggle: () => {
       ui?.open();
       if (['recording', 'paused'].includes(state)) { void stop(true); return; }
       if (state === 'ready') { void transcribe(); return; }
-      if (['success', 'sent', 'error'].includes(state)) reset();
+      if (['success', 'sent', 'filtered', 'error'].includes(state)) reset();
       if (state === 'idle') { reconcile(); void start(); }
     },
   });
@@ -381,7 +334,6 @@
     if (currentRecording && !['success', 'error'].includes(currentRecording.status)) {
       const stage = currentRecording.currentStage || 'recording';
       recordFailure(stage, new Error('Página fechada durante a operação.'));
-      void reportRemoteStatus('error', { stage, message: 'Página fechada durante a operação.' });
     }
     reset(); ui?.suspend(); observer.disconnect(); clearInterval(routeTimer);
   });
@@ -392,5 +344,12 @@
       reconcile();
     }
   });
+  let historyRefreshTimer;
+  window.addEventListener('eden-recordings-changed', () => {
+    void refreshPending();
+    clearTimeout(historyRefreshTimer);
+    if (ui?.isHistoryVisible()) historyRefreshTimer = setTimeout(() => { if (ui?.isHistoryVisible()) void showHistory(); }, 100);
+  });
+  void EV.RecordingProcessor.initialize().catch((failure) => logger.error(`Falha de recuperação local: ${failure.message}`));
   reconcile();
 })();

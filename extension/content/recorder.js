@@ -12,7 +12,8 @@
   }[error.name] || 'Não foi possível iniciar a gravação. Verifique o microfone.');
 
   EV.AudioRecorder = class {
-    constructor(onUnexpectedStop) {
+    constructor(onUnexpectedStop, onFinalized) {
+      this.onFinalized = onFinalized;
       this.onUnexpectedStop = onUnexpectedStop;
       this.generation = 0;
       this.activeSince = null;
@@ -79,12 +80,13 @@
             this.closeTracks();
             this.onUnexpectedStop(failure);
           };
-          this.recorder.onstop = () => {
+          this.recorder.onstop = async () => {
             this.closeTracks();
-            if (failure) return reject(failure);
             const blob = new Blob(chunks, { type: this.recorder.mimeType || chunks[0]?.type || 'audio/webm' });
             if (!blob.size) return reject(new Error('A gravação ficou vazia. Grave novamente.'));
-            if (blob.size > EV.CONFIG.MAX_AUDIO_BYTES) return reject(new Error('Gravação excedeu 20 MB. Faça um ditado menor.'));
+            try { await this.onFinalized?.(blob, this.durationSeconds()); }
+            catch (storageError) { return reject(storageError); }
+            if (failure) return reject(failure);
             log(`Blob criado: ${(blob.size / 1024 / 1024).toFixed(2)} MB`);
             resolve(blob);
           };
@@ -98,6 +100,8 @@
             this.onUnexpectedStop(failure);
           }
         }));
+        // TODO Fase 2: persistir incrementalmente os chunks com start(1000).
+        // V1: somente o Blob final é persistido antes da transmissão.
         this.recorder.start(1000);
         this.recordedMs = 0;
         this.activeSince = performance.now();

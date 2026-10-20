@@ -1,3 +1,4 @@
+import { prepareClinicalDictationWithAI } from '../services/aiClinicalPipeline.js';
 import { resolveExamMetadata } from '../config/examCatalog.js';
 import { createWriteStream } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
@@ -36,7 +37,7 @@ export function getTranscriptionFailureDiagnostics(error) {
   }).filter(([, value]) => value !== undefined));
 }
 
-export default async function transcribeRoutes(app, { uploadsDir, transcribeAudio, processMedicalCommands, logStore }) {
+export default async function transcribeRoutes(app, { uploadsDir, transcribeAudio, processMedicalCommands, logStore, classifyClinicalSegments, clinicalFilterConfig }) {
   app.post('/transcribe/:logId/status', async (request, reply) => {
     const { status, completionToken, error } = request.body || {};
     const updated = logStore.finish(request.params.logId, completionToken, { status, error });
@@ -50,7 +51,9 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     let logId = null, completionToken = null;
     let transcriptionStartedAt = null, transcriptionDurationMs = 0;
     let medicalCommandCount = 0;
+    let clinical = {};
     let medicalCommands = [];
+    let commandProcessing = { success: true };
     let exam = resolveExamMetadata(null);
     const started = performance.now();
     const controller = new AbortController();
@@ -94,19 +97,21 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
       transcriptionDurationMs = performance.now() - transcriptionStartedAt;
       if (typeof text !== 'string' || !text.trim()) throw httpError(502, 'O serviço não retornou uma transcrição válida.');
       originalText = text;
+      clinical = await prepareClinicalDictationWithAI(originalText, { examName: patientContext?.examName }, app.log, { classifier: classifyClinicalSegments, config: clinicalFilterConfig, signal: controller.signal });
       try {
         const details = {};
-        const processedText = processMedicalCommands(originalText, details, app.log, { examName: patientContext?.examName });
-        if (typeof processedText !== 'string' || !processedText.trim()) throw new Error('Resultado inválido');
+        const processedText = processMedicalCommands(clinical.text, details, app.log, { examName: patientContext?.examName });
+        if (typeof processedText !== 'string' || (clinical.text.trim() && !processedText.trim())) throw new Error('Resultado inválido');
         text = processedText;
         medicalCommandCount = details.count || 0;
         medicalCommands = details.commands || [];
       } catch {
+        commandProcessing = { success: false, code: 'COMMAND_PROCESSING_FAILED' };
         app.log.error('[Eden Voice] Erro ao processar comandos; mantendo transcrição original');
         text = originalText;
       }
       logStore.addTranscript(logId, {
-        originalText, finalText: text, commands: medicalCommands,
+        originalText, filteredText: clinical.filteredText, filterDetails: clinical.filterDetails, clinicalFilter: clinical.clinicalFilter, measurements: clinical.measurements, finalText: text, commands: medicalCommands,
         durationMs: transcriptionDurationMs,
       });
     } catch (error) {
@@ -116,6 +121,7 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
       if (error.code === 'FST_REQ_FILE_TOO_LARGE') failure = httpError(413, 'O áudio excedeu o limite de 20 MB.');
       else if (['FST_FILES_LIMIT', 'FST_FIELDS_LIMIT', 'FST_PARTS_LIMIT', 'FST_INVALID_MULTIPART_CONTENT_TYPE'].includes(error.code)) failure = httpError(400, 'Envie somente um arquivo no campo audio.');
       else if (error.name === 'APIConnectionTimeoutError' || error.name === 'AbortError') failure = httpError(504, 'Tempo limite excedido ou requisição cancelada.');
+      else if (error.code === 'TRANSCRIPTION_EMPTY') failure = Object.assign(httpError(502, 'Nenhuma fala foi reconhecida.'), { code: 'TRANSCRIPTION_EMPTY' });
       else if (error.statusCode && error.statusCode < 600) failure = error;
       else if (Number.isInteger(error.status) && error.status >= 400 && error.status < 600) {
         failure = httpError(error.status, getSafeProviderMessage(error.status));
@@ -135,8 +141,8 @@ export default async function transcribeRoutes(app, { uploadsDir, transcribeAudi
     if (failure && logId) logStore.fail(logId, 'transcription', failure.message, transcriptionDurationMs);
     const statusCode = failure?.statusCode || 200;
     app.log.info({ event: 'transcription', logId, durationMs: Math.round(performance.now() - started), bytes: size, success: !failure, statusCode });
-    return reply.code(statusCode).send(failure ? { success: false, error: failure.message, logId } : {
-      success: true, originalText, text, medicalCommandCount, medicalCommands, exam, examResolution: { source: 'automatic' }, logId, completionToken,
+    return reply.code(statusCode).send(failure ? { success: false, error: failure.message, ...(failure.code ? { code: failure.code } : {}), logId } : {
+      success: true, ...clinical, originalText, text, commandProcessing, medicalCommandCount, medicalCommands, exam, examResolution: { source: 'automatic' }, logId, completionToken,
     });
   });
 }

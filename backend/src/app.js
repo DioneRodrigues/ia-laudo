@@ -1,3 +1,6 @@
+import classifyClinicalSegmentsRoutes from './routes/classifyClinicalSegments.js';
+import { classifyClinicalSegments } from './services/clinicalSegmentClassifier.js';
+import { clinicalFilterConfig } from './config/clinicalFilter.js';
 import Fastify, { LogController } from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
@@ -35,8 +38,11 @@ export async function buildApp(options = {}) {
   await mkdir(uploadsDir, { recursive: true, mode: 0o700 });
   app.get('/health', async () => ({ success: true }));
   const transcriptionLogStore = options.transcriptionLogStore || createTranscriptionLogStore();
+  const classifierOptions = { classifyClinicalSegments: options.classifyClinicalSegments || classifyClinicalSegments, clinicalFilterConfig: options.clinicalFilterConfig || clinicalFilterConfig() };
+  await app.register(classifyClinicalSegmentsRoutes, classifierOptions);
   await app.register(medicalCommandRoutes);
   await app.register(transcribeRoutes, { uploadsDir, transcribeAudio: options.transcribeAudio || transcribeAudio,
+    ...classifierOptions,
     processMedicalCommands: options.processMedicalCommands || processMedicalCommands, logStore: transcriptionLogStore });
   await app.register(adminRoutes, {
     store: transcriptionLogStore,

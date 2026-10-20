@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
-import { buildApp } from '../src/app.js';
+import { buildApp as realBuildApp } from '../src/app.js';
 import { processMedicalCommands } from '../src/services/commandProcessor.js';
 
 test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 60000 }, async (t) => {
@@ -45,12 +45,15 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.waitForFunction(() => window.testEditor);
     await script('config');
     await page.evaluate((api) => { EdenVoice.CONFIG = { ...EdenVoice.CONFIG, API_BASE_URL: api, AUTO_SUBMIT: false }; }, api);
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/storage/audioStore.js', import.meta.url)) });
+    await page.evaluate(async () => { for (const row of await EdenVoice.AudioStore.getRecentRecordings()) await EdenVoice.AudioStore.deleteRecording(row.id); });
     await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/background/apiBridge.js', import.meta.url)) });
     await page.evaluate(() => {
       const local = {};
       const extensionId = 'abcdefghijklmnopabcdefghijklmnop';
       window.testApiBridge = EdenVoiceApiBridge.createHandler({ apiBaseUrl: EdenVoice.CONFIG.API_BASE_URL,
-        extensionId, fetchImpl: window.fetch.bind(window) });
+        extensionId, getRecording: EdenVoice.AudioStore.getRecording, fetchImpl: window.fetch.bind(window) });
+      EdenVoice.AudioBroker = { call: (_method, message) => testApiBridge.handle(message, { id: extensionId }) };
       window.chrome = {
         runtime: { getURL: (path) => `${location.origin}/${path}`, sendMessage: (message) => window.testApiBridge.handle(message, { id: extensionId }) },
         storage: { local: {
@@ -67,7 +70,10 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await script('medicalCommandCatalog');
     await script('apiClient');
     await script('edenEditor');
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/services/commandProcessor.generated.js', import.meta.url)) });
+    await page.addScriptTag({ path: fileURLToPath(new URL('../../extension/services/recordingProcessor.js', import.meta.url)) });
     if (controller) {
+      await page.evaluate(() => { const read = EdenVoice.getPatientContext; EdenVoice.getPatientContext = () => { const ctx = read(); return { ...ctx, patientName: ctx.patientName || 'Paciente não identificado', examName: ctx.examName || 'Exame de teste' }; }; });
       for (const name of ['recorder', 'edenControls', 'ui', 'content']) await script(name);
       await page.addStyleTag({ path: fileURLToPath(new URL('../../extension/styles/content.css', import.meta.url)) });
     }
@@ -252,10 +258,14 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
         await page.getByRole('button', { name: 'Finalizar' }).waitFor();
         await page.waitForTimeout(250);
         await page.locator('[data-testid="toggle-eden-ai-dictation-button"] svg').click();
+        if (processorFails) {
+          await page.getByRole('alert').filter({ hasText: 'Falha ao processar comandos' }).waitFor();
+          assert.equal(await page.evaluate(() => submitClicks), 0);
+          await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
+        }
         await page.getByText('Comando enviado ao Eden', { exact: true }).waitFor();
-        assert.equal(await page.evaluate(() => submittedText), processorFails ? original
-          : 'Nódulo sólido. , ao efeito Doppler observa-se predomínio da vascularização periférica sobre a central (Tipo III de Chammas).');
-        assert.equal(await page.locator('.ev-medical-commands').isVisible(), !processorFails);
+        assert.equal(await page.evaluate(() => submittedText), 'Nódulo sólido. , ao efeito Doppler observa-se predomínio da vascularização periférica sobre a central (Tipo III de Chammas).');
+        assert.equal(await page.locator('.ev-medical-commands').isVisible(), true);
         if (!processorFails) {
           assert.equal(await page.locator('.ev-medical-commands').innerText(), '1 comando médico aplicado');
           assert.equal(await page.locator('.ev-command-list strong').innerText(), 'Tireoide - Chammas III');
@@ -297,7 +307,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.ok(log.finalText.includes('Chammas V'));
     assert.equal(typeof log.timestamp, 'string');
     await page.getByRole('tab', { name: 'Histórico' }).click();
-    await page.getByRole('button', { name: /Dionismar Rodrigues/ }).click();
+    await page.getByText('Detalhes', { exact: true }).click();
     assert.equal(await page.locator('.ev-log-original-text mark').count(), 2);
     assert.equal(await page.locator('.ev-log-original-text img').count(), 0);
     assert.equal(await page.locator('.ev-log-original-text').innerText(), original.replace('Chammas 1', 'Chammas 1 → Tireoide - Chammas I').replace('Chammas 5', 'Chammas 5 → Tireoide - Chammas V'));
@@ -371,9 +381,10 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(log.exam.resolution, 'unresolved');
     assert.equal(log.commands.length, 0);
     await page.getByRole('tab', { name: 'Histórico' }).click();
-    assert.match(await page.locator('.ev-history-list').innerText(), /Não identificado/);
+    await page.locator('.ev-history-content .ev-exam-warning').waitFor();
+    assert.match(await page.locator('.ev-history-content').innerText(), /Não identificado/);
   });
-  await t.test('troca do exame após gravar bloqueia transcrição e inserção', async () => {
+  await t.test('troca do exame após gravar salva transcrição e bloqueia inserção', async () => {
     await prepare(true);
     await page.evaluate(() => {
       const exam = document.createElement('div'); exam.dataset.testid = 'study-reason-trigger';
@@ -391,7 +402,8 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     const log = await page.evaluate(() => EdenVoice.LogStore.getLogs().then((logs) => logs[0]));
     assert.equal(log.status, 'error');
     assert.equal(log.exam.name, 'Mama');
-    assert.equal(log.transcription.originalText, '');
+    assert.equal(log.transcription.originalText, transcript);
+    assert.equal(log.error.code, 'CONTEXT_MISMATCH');
   });
   await t.test('falha na inserção salva transcrição e erro com stage eden-editor', async () => {
     await prepare(true);
@@ -477,7 +489,7 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.waitForFunction(() => nativeClicks === 2);
     assert.equal(await page.getByRole('button', { name: 'Finalizar' }).isVisible(), true);
     await page.getByRole('button', { name: 'Finalizar' }).click();
-    await page.getByRole('button', { name: 'Descartar' }).click();
+    await page.getByRole('button', { name: 'Manter no histórico' }).click();
     await page.evaluate(() => {
       document.querySelector('[data-testid="toggle-eden-ai-dictation-button"] span').textContent = 'Escutando';
     });
@@ -644,6 +656,14 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     assert.equal(await page.evaluate(() => testEditor.getText()), 'Texto transcrito de teste.');
     assert.equal(await page.locator('#eden-voice-transcriber-root').count(), 1);
     assert.equal(await page.locator('audio').getAttribute('src'), null);
+    await page.getByRole('tab', { name: 'Histórico' }).click();
+    await page.getByRole('button', { name: 'Ouvir áudio', exact: true }).click();
+    await page.waitForFunction(() => document.querySelector('.ev-history-content audio')?.currentTime > 0 || document.querySelector('.ev-audio-error:not([hidden])'), null, { timeout: 8000 });
+    assert.equal(await page.locator('.ev-history-content audio').evaluate((audio) => audio.currentTime > 0), true, await page.locator('.ev-audio-message').innerText());
+    assert.equal(await page.locator('.ev-history-content audio').evaluate((audio) => audio.error), null);
+    await page.evaluate(() => { document.querySelector('#editor').style.cssText = 'width:360px;max-width:100%;margin:24px auto'; });
+    await page.waitForTimeout(100);
+    await page.locator('#eden-voice-transcriber-root').screenshot({ path: fileURLToPath(new URL('../../test-results/history-player.png', import.meta.url)) });
   });
   await t.test('troca de rota durante requisição impede inserir', async () => {
     await prepare(true);
@@ -711,8 +731,10 @@ test('Chrome: TipTap real e fluxo de ditado com microfone simulado', { timeout: 
     await page.getByRole('button', { name: 'Transcrever', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: expected }).waitFor();
     assert.equal(await page.evaluate(() => testEditor.getText()), '');
-    await page.getByRole('button', { name: 'Descartar' }).click();
+    await page.getByRole('button', { name: 'Manter no histórico' }).click();
     await page.getByRole('button', { name: 'Iniciar gravação' }).waitFor();
     await page.unrouteAll({ behavior: 'wait' });
   });
 });
+
+function buildApp(options = {}) { return realBuildApp({ classifyClinicalSegments: async () => { throw new Error('Offline test'); }, ...options }); }

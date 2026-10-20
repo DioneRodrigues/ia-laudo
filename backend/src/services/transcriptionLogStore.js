@@ -61,10 +61,14 @@ export function createTranscriptionLogStore({ maxEntries = MAX_LOG_ENTRIES } = {
       trim();
       return { id, token };
     },
-    addTranscript(id, { originalText, finalText, commands, durationMs }) {
+    addTranscript(id, { originalText, filteredText, filterDetails, clinicalFilter, measurements, finalText, commands, durationMs }) {
       const log = get(id);
       if (!log) return false;
       log.transcription.originalText = safeString(originalText) || '';
+      log.transcription.filteredText = filteredText;
+      log.filterDetails = filterDetails;
+      log.clinicalFilter = clinicalFilter;
+      log.measurements = measurements;
       log.transcription.finishedAt = new Date().toISOString();
       log.transcription.durationMs = Number.isFinite(durationMs) ? Math.max(0, Math.round(durationMs)) : 0;
       log.commands = Array.isArray(commands) ? commands.slice(0, 1000).map((command) => ({

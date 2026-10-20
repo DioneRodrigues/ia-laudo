@@ -30,6 +30,7 @@
           <button type="button" class="ev-tab" role="tab" id="ev-tab-masks" aria-controls="ev-view-masks" aria-selected="false">Máscaras</button>
           <button type="button" class="ev-tab" role="tab" id="ev-tab-history" aria-controls="ev-view-history" aria-selected="false">Histórico</button>
         </nav>
+        <button type="button" class="ev-pending" hidden></button>
         <section class="ev-history-view" id="ev-view-history" role="tabpanel" aria-labelledby="ev-tab-history" hidden aria-label="Histórico local de transcrições"><div class="ev-history-content"></div></section>
         <section class="ev-mask-view" id="ev-view-masks" role="tabpanel" aria-labelledby="ev-tab-masks" hidden aria-label="Máscaras médicas disponíveis"><div class="ev-mask-content"></div></section>
         <div class="ev-body" id="ev-view-dictation" role="tabpanel" aria-labelledby="ev-tab-dictation">
@@ -109,8 +110,10 @@
       else { cover(); get('.ev-close').focus({ preventScroll: true }); }
       position();
     };
+    get('.ev-pending').onclick = () => { void handlers.history(); };
     get('.ev-close').onclick = () => { void handlers.close(); };
     const activateView = (view) => {
+      if (view !== 'history') EV.Monitoring?.releasePlayers();
       activeView = view;
       for (const tab of root.querySelectorAll('.ev-tab')) tab.setAttribute('aria-selected', String(tab.id === `ev-tab-${view}`));
       get('.ev-body').hidden = view !== 'dictation';
@@ -129,6 +132,7 @@
     EV.Logger?.info('Interface criada');
     return {
       root,
+      pending(count) { const badge = get('.ev-pending'); badge.hidden = !count; badge.textContent = `⚠ ${count} gravações pendentes de processamento. Ver pendências`; },
       attach(target) {
         if (!root.isConnected) document.body?.append(root);
         if (target !== editor) {
@@ -155,9 +159,10 @@
         if (saved && editor) editor.style.minHeight = `${reservedHeight}px`;
         activateView('masks');
       },
+      isHistoryVisible: () => activeView === 'history' && !closed,
       historyContent: () => get('.ev-history-content'),
       commandsContent: () => get('.ev-mask-content'),
-      suspend() { restore(); root.hidden = true; },
+      suspend() { EV.Monitoring?.releasePlayers(); restore(); root.hidden = true; },
       time(seconds) {
         const hours = Math.floor(seconds / 3600);
         get('.ev-timer').textContent = [...(hours ? [hours] : []), Math.floor(seconds / 60) % 60, seconds % 60]
@@ -168,8 +173,8 @@
         // Dá espaço para ler a expansão sem ocultar as ações; listas longas ainda rolam.
         reservedHeight = medicalCommandCount > 0 || text ? 480 : 380;
         if (saved && editor.style.minHeight !== `${reservedHeight}px`) editor.style.minHeight = `${reservedHeight}px`;
-        const titles = { idle: 'Pronto para gravar', requesting: 'Aguardando microfone…', recording: 'Gravando', paused: 'Gravação pausada', stopping: 'Finalizando…', ready: 'Gravação concluída', transcribing: 'Transcrevendo… Aguarde', success: 'Texto inserido no Eden', recovery: 'Transcrição recebida', error: 'Não foi possível concluir', submitting: 'Texto inserido. Enviando ao Eden…', sent: 'Comando enviado ao Eden' };
-        const hints = { idle: 'Inicie o ditado e fale no seu ritmo.', requesting: 'Autorize o microfone para começar.', recording: 'Sua voz está sendo gravada pela extensão.', paused: 'A captura está pausada. Retome para continuar o mesmo ditado.', stopping: 'Preparando seu áudio.', ready: 'Ouça o áudio ou transcreva para continuar.', transcribing: 'Convertendo o áudio e expandindo os comandos médicos.', success: 'O campo Eden recebeu o novo ditado.', submitting: 'Aguardando o Eden receber o ditado.', sent: 'Confira o relatório gerado pelo Eden.', recovery: 'Confira o editor. O texto está disponível para cópia.', error: 'Confira a mensagem abaixo antes de tentar novamente.' };
+        const titles = { filtered: 'Nenhum trecho destinado ao laudo', idle: 'Pronto para gravar', requesting: 'Aguardando microfone…', recording: 'Gravando', paused: 'Gravação pausada', stopping: 'Finalizando…', ready: 'Gravação concluída', transcribing: 'Transcrevendo… Aguarde', success: 'Texto inserido no Eden', recovery: 'Transcrição recebida', error: 'Não foi possível concluir', submitting: 'Texto inserido. Enviando ao Eden…', sent: 'Comando enviado ao Eden' };
+        const hints = { filtered: 'Nada foi inserido. A transcrição original está no histórico.', idle: 'Inicie o ditado e fale no seu ritmo.', requesting: 'Autorize o microfone para começar.', recording: 'Sua voz está sendo gravada pela extensão.', paused: 'A captura está pausada. Retome para continuar o mesmo ditado.', stopping: 'Preparando seu áudio.', ready: 'Ouça o áudio ou transcreva para continuar.', transcribing: 'Convertendo o áudio e expandindo os comandos médicos.', success: 'O campo Eden recebeu o novo ditado.', submitting: 'Aguardando o Eden receber o ditado.', sent: 'Confira o relatório gerado pelo Eden.', recovery: 'Confira o editor. O texto está disponível para cópia.', error: 'Confira a mensagem abaixo antes de tentar novamente.' };
         root.dataset.state = state;
         get('.ev-status').textContent = titles[state];
         get('.ev-hint').textContent = hints[state];
@@ -209,8 +214,8 @@
         const buttons = {
           idle: [['Iniciar gravação', 'start', 'mic']], recording: [['Finalizar', 'stop', 'stop'], ['Pausar captura', 'pause', 'pause']],
           paused: [['Retomar captura', 'resume', 'resume'], ['Finalizar', 'stop', 'stop']],
-          ready: [['Transcrever', 'transcribe', 'send'], ['Descartar', 'reset', 'trash']],
-          success: [['Novo ditado', 'reset', 'mic']], sent: [['Novo ditado', 'reset', 'mic']],
+          ready: [['Transcrever', 'transcribe', 'send'], ['Manter no histórico', 'reset', 'file']],
+          filtered: [['Novo ditado', 'reset', 'mic']], success: [['Novo ditado', 'reset', 'mic']], sent: [['Novo ditado', 'reset', 'mic']],
           recovery: [['Novo ditado', 'reset', 'mic']], error: [['Tentar novo ditado', 'reset', 'mic']],
         };
         for (const [index, [label, action, symbol]] of (buttons[state] || []).entries()) {

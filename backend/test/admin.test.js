@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildApp } from '../src/app.js';
+import { buildApp as realBuildApp } from '../src/app.js';
 import { createTranscriptionLogStore } from '../src/services/transcriptionLogStore.js';
 
 function transcriptionRequest() {
@@ -108,3 +108,5 @@ test('painel indica configuração ausente sem derrubar a API de transcrição',
   assert.equal(login.statusCode, 503);
   assert.equal((await app.inject({ method: 'GET', url: '/health' })).statusCode, 200);
 });
+
+function buildApp(options = {}) { return realBuildApp({ classifyClinicalSegments: async () => { throw new Error('Offline test'); }, ...options }); }
