@@ -1,4 +1,4 @@
-import { isMedicalCommandNegated } from './medicalCommandNegation.js';
+import { isMedicalCommandNegated } from "./medicalCommandNegation.js";
 import {
   resolveExamContext,
   resolveExamMetadata,
@@ -377,7 +377,7 @@ export const MEDICAL_COMMANDS = [
     id: "transvaginal-mioma",
     exams: ["transvaginal"],
     label: "Transvaginal - Mioma",
-    aliases: ["mioma", "mioma uterino"],
+    aliases: ["mioma uterino"],
     replacement:
       "Miométrio: Heterogêneo pela presença de nódulos miomatosos, sendo:\n- Intramural, localizado na parede corporal @, medindo @ cm, FIGO",
   },
@@ -684,7 +684,12 @@ export const MEDICAL_COMMANDS = [
     id: "abdome-hemangioma",
     exams: ["abdome"],
     label: "Abdome - Hemangioma",
-    aliases: ["hemangioma", "hemangioma no fígado", "hemangioma no figado"],
+    aliases: [
+      "hemangioma",
+      "hemangioma no fígado",
+      "hemangioma no figado",
+      "emangioma",
+    ],
     replacement:
       "Presença de nódulo sólido hiperecóico, com contornos regulares, localizado no segmento @@@, do lobo hepático @@@, medindo @@@ cm.",
   },
@@ -835,7 +840,11 @@ function comparisonWithOffsets(text) {
   return { comparison, starts, ends };
 }
 
-export function findMedicalCommandCandidates(text, allowedCommands, logger = console) {
+export function findMedicalCommandCandidates(
+  text,
+  allowedCommands,
+  logger = console,
+) {
   const { comparison, starts, ends } = comparisonWithOffsets(text);
   const owners = new Map();
   const candidates = [];
@@ -878,7 +887,8 @@ export function findMedicalCommandCandidates(text, allowedCommands, logger = con
   let end = -1;
   for (const candidate of candidates) {
     if (candidate.start < end) continue;
-    selected.push(candidate); end = candidate.end;
+    selected.push(candidate);
+    end = candidate.end;
   }
   return selected;
 }
@@ -925,14 +935,19 @@ export function createMedicalCommandProcessor(commands) {
     );
     logger.info("[Eden Voice] Processando comandos médicos");
 
-    const candidates = findMedicalCommandCandidates(text, allowedCommands, logger);
+    const candidates = findMedicalCommandCandidates(
+      text,
+      allowedCommands,
+      logger,
+    );
 
     let cursor = 0;
     const pieces = [];
     const applied = [];
 
     for (const { start, end, command, alias } of candidates) {
-      if (start < cursor || isMedicalCommandNegated(text, start, end, command)) continue;
+      if (start < cursor || isMedicalCommandNegated(text, start, end, command))
+        continue;
 
       const detectedText = text.slice(start, end);
       pieces.push(text.slice(cursor, start), command.replacement);
