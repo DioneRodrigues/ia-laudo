@@ -1,0 +1,9 @@
+{
+  "name": "eden-voice-release-tools",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Publicacao da extensao Eden Voice via IP privado e Easypanel",
+  "scripts": {
+    "release": "node scripts/release-extension.mjs"
+  }
+}
