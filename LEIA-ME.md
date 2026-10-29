@@ -16,6 +16,7 @@ O CRX incluído é a versão 0.9.5 fornecida na conversa. O pacote NÃO inclui a
 Requer Node.js, Chrome instalado e o arquivo `extension.pem` original em local SEGURO FORA do Git.
 
 Windows PowerShell:
+
 ```powershell
 $env:EDEN_PEM="C:\\ChavesSeguras\\extension.pem"
 # Opcional se Chrome nao estiver no caminho padrao:
@@ -24,13 +25,23 @@ npm run release -- --version 0.9.6
 ```
 
 Linux/macOS:
+
 ```bash
 export EDEN_PEM="$HOME/.secrets/eden-voice/extension.pem"
 # export CHROME_BIN="/usr/bin/google-chrome"
 npm run release -- --version 0.9.6
 ```
 
+Exemplo de push:
+
+```
+git add extension/manifest.json extension-distribution/
+git commit -m "release: Eden Voice 0.9.6"
+git push origin main
+```
+
 A rotina:
+
 - confere o ID do PEM (gnilmagafphoflioefljpklfppejmhho);
 - recusa publicar versao igual ou inferior ao XML atual;
 - monta temporariamente a extensao e coloca `update_url` nela;
@@ -39,11 +50,13 @@ A rotina:
 - apaga os arquivos temporarios e nunca copia o PEM para a distribuicao.
 
 Revisar e publicar no GitHub:
+
 ```bash
 git add extension/manifest.json extension-distribution/extension.crx extension-distribution/updates.xml
 git commit -m "release: eden voice 0.9.6"
 git push origin main
 ```
+
 Se o Easypanel tiver Auto Deploy, o servico de distribuicao fara o redeploy. Nada altera o backend nem implanta automaticamente antes do push.
 
 ## 3) Servico novo no Easypanel
@@ -67,6 +80,7 @@ OBS: Porta Docker publicada pode estar acessivel em TODAS as interfaces do servi
 Para o Chrome confiar no host, emita certificado TLS com SAN `IP:10.33.0.7` utilizando CA interna.
 
 Um exemplo de emissao em maquina administrativa com OpenSSL (arquivos privados nunca vao para Git):
+
 ```bash
 openssl genrsa -out eden-ca.key 3072
 openssl req -x509 -new -sha256 -days 3650 -key eden-ca.key -out eden-ca.crt -subj "/CN=Clinica da Mama CA interna" -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign"
@@ -80,6 +94,7 @@ extendedKeyUsage = serverAuth
 SAN
 openssl x509 -req -in server.csr -CA eden-ca.crt -CAkey eden-ca.key -CAcreateserial -out server.crt -days 365 -sha256 -extfile san.cnf
 ```
+
 Distribua SOMENTE `eden-ca.crt` via GPO `Configuracao do Computador > Politicas > Configuracoes do Windows > Configuracoes de Seguranca > Politicas de Chave Publica > Autoridades de Certificacao Raiz Confiaveis`.
 Guarde `eden-ca.key` offline e com acesso extremamente restrito; a chave `server.key` so deve existir nos locais de execucao seguros. O `.pem` da extensao e outra chave privada independente.
 
@@ -91,6 +106,7 @@ curl.exe -I https://10.33.0.7:7777/eden-voice/updates.xml
 curl.exe -I https://10.33.0.7:7777/eden-voice/extension.crx
 curl.exe https://10.33.0.7:7777/eden-voice/updates.xml
 ```
+
 Os arquivos precisam responder 200; CRX deve ter MIME application/x-chrome-extension e XML application/xml; nao utilize `-k` para validar a confianca do Chrome.
 
 ## 6) GPO Chrome ExtensionSettings

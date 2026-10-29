@@ -3,7 +3,7 @@
     //API_BASE_URL: "http://0.0.0.0:3009",
     API_BASE_URL: "http://10.33.0.7",
     REQUEST_TIMEOUT_MS: 150000,
-    MAX_AUDIO_BYTES: 20 * 1024 * 1024,
+    MAX_AUDIO_BYTES: 50 * 1024 * 1024,
     AUTO_SUBMIT: true,
     DICTATION_BUTTON_SELECTOR:
       '[data-testid="toggle-eden-ai-dictation-button"]',
