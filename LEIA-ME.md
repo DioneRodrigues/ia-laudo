@@ -27,9 +27,13 @@ npm run release -- --version 0.9.6
 Linux/macOS:
 
 ```bash
-export EDEN_PEM="$HOME/.secrets/eden-voice/extension.pem"
+export EDEN_PEM="$(pwd)/extension-distribution/extension.pem"
 # export CHROME_BIN="/usr/bin/google-chrome"
 npm run release -- --version 0.9.6
+
+
+test -f "$EDEN_PEM" && echo "PEM encontrado"
+test -x "$CHROME_BIN" && echo "Chrome encontrado"
 ```
 
 Exemplo de push:
